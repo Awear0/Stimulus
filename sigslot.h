@@ -139,6 +139,31 @@ private:
     connection m_connection;
 };
 
+template<std::size_t Index, class... Args>
+concept in_args_range = (Index < sizeof...(Args));
+
+template<std::size_t... Values>
+struct all_different_implementation: std::true_type
+{
+};
+
+template<std::size_t... Values>
+constexpr bool all_different_implementation_t { all_different_implementation<Values...>::value };
+
+template<std::size_t Value>
+struct all_different_implementation<Value>: std::true_type
+{
+};
+
+template<std::size_t Value, std::size_t... Tail>
+struct all_different_implementation<Value, Tail...>
+    : std::conditional_t<((Value == Tail) || ...), std::false_type, std::true_type>
+{
+};
+
+template<std::size_t... Values>
+concept all_different = all_different_implementation_t<Values...>;
+
 // TODO AROSS: operator= strategy for signal
 template<signal_arg... Args>
 class emitter::signal final
@@ -148,10 +173,18 @@ public:
     using slot = std::function<void(Args...)>;
 
     template<std::invocable<Args...> Callable>
-    connection connect(Callable&& callable) const;
+    auto connect(Callable&& callable) const -> connection;
 
     template<std::invocable<Args...> Callable>
-    connection connect_once(Callable&& callable) const;
+    auto connect_once(Callable&& callable) const -> connection;
+
+    template<std::size_t... Indexes>
+        requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
+    class mapped_signal;
+
+    template<std::size_t... Indexes>
+        requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
+    auto map() -> mapped_signal<Indexes...>;
 
 private:
     template<std::convertible_to<Args>... EmittedArgs>
@@ -186,7 +219,45 @@ private:
 };
 
 template<signal_arg... Args>
+template<std::size_t... Indexes>
+    requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
+class emitter::signal<Args...>::mapped_signal
+{
+public:
+    mapped_signal(const signal& emitted_signal):
+        m_signal { emitted_signal }
+    {
+    }
+
+    template<std::invocable<Args...[Indexes]...> Callable>
+    auto connect(Callable&& callable) const&& -> connection
+    {
+        return m_signal.connect([callable = std::forward<Callable>(callable)](Args&&... args)
+        { callable(std::forward<Args...[Indexes]>(args...[Indexes])...); });
+    }
+
+    template<std::invocable<Args...[Indexes]...> Callable>
+    auto connect_once(Callable&& callable) const&& -> connection
+    {
+        return m_signal.connect_once([callable = std::forward<Callable>(callable)](Args&&... args)
+        { callable(std::forward<Args...[Indexes]>(args...[Indexes])...); });
+    }
+
+private:
+    const signal& m_signal;
+};
+
+template<signal_arg... Args>
+template<std::size_t... Indexes>
+    requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
+auto emitter::signal<Args...>::map() -> mapped_signal<Indexes...>
+{
+    return { *this };
+}
+
+template<signal_arg... Args>
 class emitter::signal<Args...>::connection_holder_implementation final: public connection_holder
+
 {
 public:
     template<std::convertible_to<signal::slot> Callable>
@@ -238,7 +309,7 @@ private:
 
 template<signal_arg... Args>
 template<std::invocable<Args...> Callable>
-connection emitter::signal<Args...>::connect(Callable&& callable) const
+auto emitter::signal<Args...>::connect(Callable&& callable) const -> connection
 {
     m_slots.emplace_back(
         std::make_shared<connection_holder_implementation>(*this,
@@ -249,7 +320,7 @@ connection emitter::signal<Args...>::connect(Callable&& callable) const
 
 template<signal_arg... Args>
 template<std::invocable<Args...> Callable>
-connection emitter::signal<Args...>::connect_once(Callable&& callable) const
+auto emitter::signal<Args...>::connect_once(Callable&& callable) const -> connection
 {
     m_slots.emplace_back(
         std::make_shared<connection_holder_implementation>(*this,

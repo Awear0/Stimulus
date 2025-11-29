@@ -9,6 +9,7 @@ add_executable(tests
     test_basic_connect_emit.cpp
     test_connection.cpp
     test_connect_once.cpp
+    test_map.cpp
 )
 
 target_link_libraries(tests
