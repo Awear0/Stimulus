@@ -7,6 +7,7 @@ find_package(GTest REQUIRED)
 
 add_executable(tests
     test_basic_connect_emit.cpp
+    test_connection.cpp
 )
 
 target_link_libraries(tests
