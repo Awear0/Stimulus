@@ -139,9 +139,9 @@ private:
     connection m_connection;
 };
 
+// TODO AROSS: operator= strategy for signal
 template<signal_arg... Args>
 class emitter::signal final
-
 {
 public:
     friend emitter;
@@ -149,6 +149,9 @@ public:
 
     template<std::invocable<Args...> Callable>
     connection connect(Callable&& callable) const;
+
+    template<std::invocable<Args...> Callable>
+    connection connect_once(Callable&& callable) const;
 
 private:
     template<std::convertible_to<Args>... EmittedArgs>
@@ -182,15 +185,17 @@ private:
     mutable std::vector<std::shared_ptr<connection_holder_implementation>> m_slots {};
 };
 
-// TODO AROSS: operator= strategy for signal
 template<signal_arg... Args>
 class emitter::signal<Args...>::connection_holder_implementation final: public connection_holder
 {
 public:
     template<std::convertible_to<signal::slot> Callable>
-    connection_holder_implementation(const signal& connected_signal, Callable&& callable):
+    connection_holder_implementation(const signal& connected_signal,
+                                     Callable&& callable,
+                                     bool single_shot = false):
         m_signal { connected_signal },
-        m_slot { std::forward<Callable>(callable) }
+        m_slot { std::forward<Callable>(callable) },
+        m_single_shot { single_shot }
     {
     }
 
@@ -201,6 +206,10 @@ public:
         if (m_suspended)
         {
             return;
+        }
+        if (m_single_shot)
+        {
+            disconnect();
         }
         m_slot(std::forward<EmittedArgs>(args)...);
     }
@@ -224,6 +233,7 @@ private:
     signal::slot m_slot;
     const signal& m_signal;
     bool m_suspended { false };
+    bool m_single_shot;
 };
 
 template<signal_arg... Args>
@@ -233,6 +243,18 @@ connection emitter::signal<Args...>::connect(Callable&& callable) const
     m_slots.emplace_back(
         std::make_shared<connection_holder_implementation>(*this,
                                                            std::forward<Callable>(callable)));
+
+    return { m_slots.back() };
+}
+
+template<signal_arg... Args>
+template<std::invocable<Args...> Callable>
+connection emitter::signal<Args...>::connect_once(Callable&& callable) const
+{
+    m_slots.emplace_back(
+        std::make_shared<connection_holder_implementation>(*this,
+                                                           std::forward<Callable>(callable),
+                                                           true));
 
     return { m_slots.back() };
 }
