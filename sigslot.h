@@ -193,6 +193,9 @@ public:
                  (not_void<std::invoke_result_t<Transformations, Args>> && ...))
     class transformed_signal;
 
+    template<class IndexSequence, class... Transformations>
+    class mapped_transformed_signal;
+
 private:
     template<std::size_t Value>
     using identity_t = const std::identity&;
@@ -283,7 +286,39 @@ public:
         return m_signal.connect_once(create_map_lambda(std::forward<Callable>(callable)));
     }
 
+    template<std::invocable<Args...[Indexes]>... Transformations>
+        requires((sizeof...(Transformations) == sizeof...(Args)) &&
+                 (not_void<std::invoke_result_t<Transformations, Args...[Indexes]>> && ...))
+    auto transform(Transformations&&... transformations)
+        const&& -> mapped_transformed_signal<std::index_sequence<Indexes...>, Transformations...>
+    {
+        return { m_signal, std::forward<Transformations>(transformations)... };
+    }
+
+    template<class... Transformations>
+        requires(sizeof...(Transformations) < sizeof...(Args))
+    auto transform(Transformations&&... transformations) const&&
+    {
+        return std::move(*this).partial_transformation(
+            std::make_index_sequence<sizeof...(Args) - sizeof...(Transformations)> {},
+            std::forward<Transformations>(transformations)...);
+    }
+
 private:
+    template<std::size_t... IdentityIndexes, class... Transformations>
+    auto partial_transformation(const std::index_sequence<IdentityIndexes...>&,
+                                Transformations&&... transformations) const
+    {
+        static constexpr std::identity identity {};
+
+        static constexpr auto create_identity {
+            [](std::size_t Index) constexpr -> const std::identity& { return identity; }
+        };
+
+        return std::move(*this).transform(std::forward<Transformations>(transformations)...,
+                                          create_identity(IdentityIndexes)...);
+    }
+
     template<std::invocable<Args...[Indexes]...> Callable>
     auto create_map_lambda(Callable&& callable) const
     {
@@ -382,7 +417,57 @@ auto emitter::signal<Args...>::partial_transformation(
 }
 
 template<signal_arg... Args>
+template<std::size_t... Indexes, class... Transformations>
+    requires(((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>) &&
+             ((std::invocable<Transformations, Args...[Indexes]> && ...) &&
+              (not_void<std::invoke_result_t<Transformations, Args...[Indexes]>> && ...)))
+class emitter::signal<Args...>::mapped_transformed_signal<std::index_sequence<Indexes...>,
+                                                          Transformations...>
+{
+public:
+    mapped_transformed_signal(const signal& emitted_signal, Transformations... transformations):
+        m_signal { emitted_signal },
+        m_transformations { std::forward<Transformations>(transformations)... }
+    {
+    }
+
+    template<std::invocable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable>
+    auto connect(Callable&& callable) && -> connection
+    {
+        return m_signal.connect(create_map_transformation_lambda(
+            std::make_index_sequence<sizeof...(Transformations)> {},
+            std::forward<Callable>(callable)));
+    }
+
+    template<std::invocable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable>
+    auto connect_once(Callable&& callable) && -> connection
+    {
+        return m_signal.connect_once(create_map_transformation_lambda(
+            std::make_index_sequence<sizeof...(Transformations)> {},
+            std::forward<Callable>(callable)));
+    }
+
+private:
+    template<std::invocable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable,
+             std::size_t... TransformationIndexes>
+    auto create_map_transformation_lambda(const std::index_sequence<TransformationIndexes...>&,
+                                          Callable&& callable)
+    {
+        return [callable = std::forward<Callable>(callable),
+                transformations = std::move(m_transformations)](Args&&... args) mutable
+        {
+            callable(std::get<TransformationIndexes>(transformations)(
+                std::forward<Args...[Indexes]>(args...[Indexes]))...);
+        };
+    }
+
+    const signal& m_signal;
+    std::tuple<Transformations...> m_transformations;
+};
+
+template<signal_arg... Args>
 class emitter::signal<Args...>::connection_holder_implementation final: public connection_holder
+
 {
 public:
     template<std::convertible_to<signal::slot> Callable>

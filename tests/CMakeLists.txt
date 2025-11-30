@@ -11,6 +11,7 @@ add_executable(tests
     test_connect_once.cpp
     test_map.cpp
     test_transform.cpp
+    test_map_transform.cpp
 )
 
 target_link_libraries(tests
