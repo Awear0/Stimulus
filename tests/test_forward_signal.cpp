@@ -123,6 +123,18 @@ protected:
 
         signal<int, int> m_signal;
     };
+
+    template<class... Args>
+    struct double_swap_forwarding_emitter: public emitter
+    {
+        double_swap_forwarding_emitter(const signal<Args...>& emitting_signal)
+        {
+            connect(emitting_signal.template map<1, 0>().transform(to_int, to_string),
+                    &double_swap_forwarding_emitter::m_signal);
+        }
+
+        signal<int, std::string> m_signal;
+    };
 };
 
 TEST_F(test_forward_signal, same_empty_signal)
@@ -493,4 +505,29 @@ TEST_F(test_forward_signal, to_int_transform_int_string_signal)
     EXPECT_EQ(call_args<int>.size(), 4);
     EXPECT_EQ(call_args<int>.back(), 57);
     EXPECT_EQ(*std::next(call_args<int>.begin(), 2), 47);
+}
+
+TEST_F(test_forward_signal, double_swamp_forwarding)
+{
+    int& count = call_count<int, std::string>;
+    reset<int, std::string>();
+
+    double_swap_forwarding_emitter receiver(int_string_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<int, std::string>);
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(44, "55");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 1);
+    EXPECT_EQ(call_args<int>.back(), 55);
+    EXPECT_EQ(call_args<std::string>.size(), 1);
+    EXPECT_EQ(call_args<std::string>.back(), "44");
+
+    int_string_emitter.generic_emit(47, "57");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 2);
+    EXPECT_EQ(call_args<int>.back(), 57);
+    EXPECT_EQ(call_args<std::string>.size(), 2);
+    EXPECT_EQ(call_args<std::string>.back(), "47");
 }
