@@ -6,6 +6,12 @@
 
 #include "utilities.h"
 
+namespace
+{
+    auto to_string { [](int value) { return std::to_string(value); } };
+    auto to_int { [](std::string text) { return std::atoi(text.c_str()); } };
+} // namespace
+
 class test_forward_signal: public ::testing::Test
 {
 protected:
@@ -69,6 +75,53 @@ protected:
         }
 
         signal<Args...[1], Args...[0]> m_signal;
+    };
+
+    template<class... Args>
+    struct no_transformation_forwarding_emitter: public emitter
+    {
+        no_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
+        {
+            connect(emitting_signal.transform(), &no_transformation_forwarding_emitter::m_signal);
+        }
+
+        signal<Args...> m_signal;
+    };
+
+    template<class... Args>
+    struct to_string_to_int_transformation_forwarding_emitter: public emitter
+    {
+        to_string_to_int_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
+        {
+            connect(emitting_signal.transform(to_string, to_int),
+                    &to_string_to_int_transformation_forwarding_emitter::m_signal);
+        }
+
+        signal<std::string, int> m_signal;
+    };
+
+    template<class... Args>
+    struct to_string_transformation_forwarding_emitter: public emitter
+    {
+        to_string_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
+        {
+            connect(emitting_signal.transform(to_string),
+                    &to_string_transformation_forwarding_emitter::m_signal);
+        }
+
+        signal<std::string, std::string> m_signal;
+    };
+
+    template<class... Args>
+    struct to_int_transformation_forwarding_emitter: public emitter
+    {
+        to_int_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
+        {
+            connect(emitting_signal.transform(std::identity {}, to_int),
+                    &to_int_transformation_forwarding_emitter::m_signal);
+        }
+
+        signal<int, int> m_signal;
     };
 };
 
@@ -306,4 +359,138 @@ TEST_F(test_forward_signal, string_int_map_int_string_signal)
     EXPECT_EQ(call_args<std::string>.back(), "8");
     EXPECT_EQ(call_args<int>.size(), 2);
     EXPECT_EQ(call_args<int>.back(), 8);
+}
+
+TEST_F(test_forward_signal, empty_transform_empty_signal)
+{
+    int& count = call_count<>;
+    reset<>();
+
+    no_transformation_forwarding_emitter receiver(empty_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<>);
+    EXPECT_EQ(count, 0);
+
+    empty_emitter.generic_emit();
+    EXPECT_EQ(count, 1);
+
+    empty_emitter.generic_emit();
+    EXPECT_EQ(count, 2);
+}
+
+TEST_F(test_forward_signal, empty_transform_int_signal)
+{
+    int& count = call_count<int>;
+    reset<int>();
+
+    no_transformation_forwarding_emitter receiver(int_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<int>);
+    EXPECT_EQ(count, 0);
+
+    int_emitter.generic_emit(44);
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 1);
+    EXPECT_EQ(call_args<int>.back(), 44);
+
+    int_emitter.generic_emit(47);
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 2);
+    EXPECT_EQ(call_args<int>.back(), 47);
+}
+
+TEST_F(test_forward_signal, empty_transform_int_string_signal)
+{
+    int& count = call_count<int, std::string>;
+    reset<int, std::string>();
+
+    no_transformation_forwarding_emitter receiver(int_string_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<int, std::string>);
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(44, "55");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 1);
+    EXPECT_EQ(call_args<int>.back(), 44);
+    EXPECT_EQ(call_args<std::string>.size(), 1);
+    EXPECT_EQ(call_args<std::string>.back(), "55");
+
+    int_string_emitter.generic_emit(47, "57");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 2);
+    EXPECT_EQ(call_args<int>.back(), 47);
+    EXPECT_EQ(call_args<std::string>.size(), 2);
+    EXPECT_EQ(call_args<std::string>.back(), "57");
+}
+
+TEST_F(test_forward_signal, to_string_to_int_transform_int_string_signal)
+{
+    int& count = call_count<std::string, int>;
+    reset<std::string, int>();
+
+    to_string_to_int_transformation_forwarding_emitter receiver(int_string_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<std::string, int>);
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(44, "55");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 1);
+    EXPECT_EQ(call_args<int>.back(), 55);
+    EXPECT_EQ(call_args<std::string>.size(), 1);
+    EXPECT_EQ(call_args<std::string>.back(), "44");
+
+    int_string_emitter.generic_emit(47, "57");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 2);
+    EXPECT_EQ(call_args<int>.back(), 57);
+    EXPECT_EQ(call_args<std::string>.size(), 2);
+    EXPECT_EQ(call_args<std::string>.back(), "47");
+}
+
+TEST_F(test_forward_signal, to_string_transform_int_string_signal)
+{
+    int& count = call_count<std::string, std::string>;
+    reset<std::string, std::string>();
+
+    to_string_transformation_forwarding_emitter receiver(int_string_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<std::string, std::string>);
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(44, "55");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<std::string>.size(), 2);
+    EXPECT_EQ(call_args<std::string>.back(), "55");
+    EXPECT_EQ(*call_args<std::string>.begin(), "44");
+
+    int_string_emitter.generic_emit(47, "57");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<std::string>.size(), 4);
+    EXPECT_EQ(call_args<std::string>.back(), "57");
+    EXPECT_EQ(*std::next(call_args<std::string>.begin(), 2), "47");
+}
+
+TEST_F(test_forward_signal, to_int_transform_int_string_signal)
+{
+    int& count = call_count<int, int>;
+    reset<int, int>();
+
+    to_int_transformation_forwarding_emitter receiver(int_string_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<int, int>);
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(44, "55");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 2);
+    EXPECT_EQ(call_args<int>.back(), 55);
+    EXPECT_EQ(*call_args<int>.begin(), 44);
+
+    int_string_emitter.generic_emit(47, "57");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 4);
+    EXPECT_EQ(call_args<int>.back(), 57);
+    EXPECT_EQ(*std::next(call_args<int>.begin(), 2), 47);
 }

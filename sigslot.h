@@ -96,6 +96,42 @@ protected:
                  mapped_signal<std::index_sequence<Indexes...>, EmitterArgs...>&& mapped_signal,
                  signal<ReceiverArgs...> Receiver::* receiver_signal) -> connection;
 
+    template<class Receiver,
+             signal_arg... EmitterArgs,
+             signal_arg... ReceiverArgs,
+             std::size_t... Indexes>
+        requires(std::convertible_to<EmitterArgs...[Indexes], ReceiverArgs> && ...)
+    auto
+        connect_once(this const Receiver& self,
+                     mapped_signal<std::index_sequence<Indexes...>, EmitterArgs...>&& mapped_signal,
+                     signal<ReceiverArgs...> Receiver::* receiver_signal) -> connection;
+
+    template<class Receiver,
+             signal_arg... EmitterArgs,
+             signal_arg... ReceiverArgs,
+             class... Transformations>
+        requires((std::invocable<Transformations, EmitterArgs> && ...) &&
+                 (std::convertible_to<std::invoke_result_t<Transformations, EmitterArgs>,
+                                      ReceiverArgs> &&
+                  ...))
+    auto connect(this const Receiver& self,
+                 transformed_signal<emitter::signal<EmitterArgs...>, Transformations...>&&
+                     transformed_signal,
+                 signal<ReceiverArgs...> Receiver::* receiver_signal) -> connection;
+
+    template<class Receiver,
+             signal_arg... EmitterArgs,
+             signal_arg... ReceiverArgs,
+             class... Transformations>
+        requires((std::invocable<Transformations, EmitterArgs> && ...) &&
+                 (std::convertible_to<std::invoke_result_t<Transformations, EmitterArgs>,
+                                      ReceiverArgs> &&
+                  ...))
+    auto connect_once(this const Receiver& self,
+                      transformed_signal<emitter::signal<EmitterArgs...>, Transformations...>&&
+                          transformed_signal,
+                      signal<ReceiverArgs...> Receiver::* receiver_signal) -> connection;
+
 private:
     template<class Receiver, signal_arg... EmitterArgs, signal_arg... ReceiverArgs>
         requires(std::convertible_to<EmitterArgs, ReceiverArgs> && ...)
@@ -117,8 +153,33 @@ private:
         mapped_signal<std::index_sequence<Indexes...>, EmitterArgs...>&& mapped_signal,
         signal<ReceiverArgs...> Receiver::* receiver_signal)
     {
-        return [&self, receiver_signal](EmitterArgs...[Indexes]&&... args)
+        return [&self, receiver_signal](EmitterArgs...[Indexes]&&... args) mutable
         { (self.*receiver_signal).emit(std::forward<EmitterArgs...[Indexes]>(args)...); };
+    }
+
+    template<class Receiver,
+             signal_arg... EmitterArgs,
+             signal_arg... ReceiverArgs,
+             class... Transformations,
+             std::size_t... Indexes>
+        requires((std::invocable<Transformations, EmitterArgs> && ...) &&
+                 (std::convertible_to<std::invoke_result_t<Transformations, EmitterArgs>,
+                                      ReceiverArgs> &&
+                  ...))
+
+    auto transformed_signal_forwarding_lambda(
+        this const Receiver& self,
+        transformed_signal<emitter::signal<EmitterArgs...>, Transformations...>&&
+            transformed_signal,
+        signal<ReceiverArgs...> Receiver::* receiver_signal,
+        const std::index_sequence<Indexes...>&)
+    {
+        return [&self, receiver_signal](
+                   std::invoke_result_t<Transformations, EmitterArgs>&&... args) mutable
+        {
+            (self.*receiver_signal)
+                .emit(std::forward<std::invoke_result_t<Transformations, EmitterArgs>>(args)...);
+        };
     }
 
     class connection_holder;
@@ -411,6 +472,21 @@ auto emitter::connect(
         .connect(self.mapped_signal_forwarding_lambda(std::move(mapped_signal), receiver_signal));
 };
 
+template<class Receiver,
+         signal_arg... EmitterArgs,
+         signal_arg... ReceiverArgs,
+         std::size_t... Indexes>
+    requires(std::convertible_to<EmitterArgs...[Indexes], ReceiverArgs> && ...)
+auto emitter::connect_once(
+    this const Receiver& self,
+    mapped_signal<std::index_sequence<Indexes...>, EmitterArgs...>&& mapped_signal,
+    signal<ReceiverArgs...> Receiver::* receiver_signal) -> connection
+{
+    return std::move(mapped_signal)
+        .connect_once(
+            self.mapped_signal_forwarding_lambda(std::move(mapped_signal), receiver_signal));
+};
+
 template<signal_arg... Args>
 template<std::size_t... Indexes>
     requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
@@ -426,6 +502,8 @@ template<signal_arg... Args, class... Transformations>
 class transformed_signal<emitter::signal<Args...>, Transformations...>
 {
 public:
+    friend emitter;
+
     transformed_signal(const emitter::signal<Args...>& emitted_signal,
                        Transformations&&... transformations):
         m_signal { emitted_signal },
@@ -462,6 +540,46 @@ private:
     const emitter::signal<Args...>& m_signal;
     std::tuple<Transformations...> m_transformations;
 };
+
+template<class Receiver,
+         signal_arg... EmitterArgs,
+         signal_arg... ReceiverArgs,
+         class... Transformations>
+    requires(
+        (std::invocable<Transformations, EmitterArgs> && ...) &&
+        (std::convertible_to<std::invoke_result_t<Transformations, EmitterArgs>, ReceiverArgs> &&
+         ...))
+auto emitter::connect(
+    this const Receiver& self,
+    transformed_signal<emitter::signal<EmitterArgs...>, Transformations...>&& transformed_signal,
+    signal<ReceiverArgs...> Receiver::* receiver_signal) -> connection
+{
+    return std::move(transformed_signal)
+        .connect(self.transformed_signal_forwarding_lambda(
+            std::move(transformed_signal),
+            receiver_signal,
+            std::make_index_sequence<sizeof...(Transformations)> {}));
+}
+
+template<class Receiver,
+         signal_arg... EmitterArgs,
+         signal_arg... ReceiverArgs,
+         class... Transformations>
+    requires(
+        (std::invocable<Transformations, EmitterArgs> && ...) &&
+        (std::convertible_to<std::invoke_result_t<Transformations, EmitterArgs>, ReceiverArgs> &&
+         ...))
+auto emitter::connect_once(
+    this const Receiver& self,
+    transformed_signal<emitter::signal<EmitterArgs...>, Transformations...>&& transformed_signal,
+    signal<ReceiverArgs...> Receiver::* receiver_signal) -> connection
+{
+    return std::move(transformed_signal)
+        .connect_once(self.transformed_signal_forwarding_lambda(
+            std::move(transformed_signal),
+            receiver_signal,
+            std::make_index_sequence<sizeof...(Transformations)> {}));
+}
 
 template<signal_arg... Args>
 template<std::invocable<Args>... Transformations>
