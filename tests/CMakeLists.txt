@@ -12,6 +12,7 @@ add_executable(tests
     test_map.cpp
     test_transform.cpp
     test_map_transform.cpp
+    test_forward_signal.cpp
 )
 
 target_link_libraries(tests
