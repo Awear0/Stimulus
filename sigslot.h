@@ -235,8 +235,10 @@ private:
             return;
         }
 
-        auto begin { m_slots.begin() };
-        auto previous_to_end { std::prev(m_slots.end()) };
+        auto slots { m_slots };
+
+        auto begin { slots.begin() };
+        auto previous_to_end { std::prev(slots.end()) };
 
         // TODO AROSS: Handle exceptions
 
@@ -245,7 +247,7 @@ private:
             (**it)(emitted_args...);
         }
 
-        (*m_slots.back())(std::forward<EmittedArgs>(emitted_args)...);
+        (*slots.back())(std::forward<EmittedArgs>(emitted_args)...);
     }
 
     class connection_holder_implementation;
