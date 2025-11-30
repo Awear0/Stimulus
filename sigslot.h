@@ -36,7 +36,9 @@ struct all_different_implementation<Value>: std::true_type
 
 template<std::size_t Value, std::size_t... Tail>
 struct all_different_implementation<Value, Tail...>
-    : std::conditional_t<((Value == Tail) || ...), std::false_type, std::true_type>
+    : std::conditional_t<((Value == Tail) || ...) || !all_different_implementation_t<Tail...>,
+                         std::false_type,
+                         std::true_type>
 {
 };
 
