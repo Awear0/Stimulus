@@ -49,6 +49,9 @@ class mapped_signal;
 template<class Signal, class... Transformations>
 class transformed_signal;
 
+template<class Signal, class IndexSequence, class... Transformations>
+class mapped_transformed_signal;
+
 class emitter
 {
 public:
@@ -65,6 +68,9 @@ protected:
 
     template<class Signal, class... Transformations>
     friend class transformed_signal;
+
+    template<class Signal, class IndexSequence, class... Transformations>
+    friend class mapped_transformed_signal;
 
     template<class Emitter, signal_arg... Args, std::convertible_to<Args>... EmittedArgs>
     void emit(this const Emitter& self,
@@ -321,9 +327,6 @@ public:
         requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
     auto map() const -> mapped_signal<std::index_sequence<Indexes...>, Args...>;
 
-    template<class IndexSequence, class... Transformations>
-    class mapped_transformed_signal;
-
 private:
     template<std::size_t Value>
     using identity_t = const std::identity&;
@@ -418,8 +421,10 @@ public:
     template<std::invocable<Args...[Indexes]>... Transformations>
         requires((sizeof...(Transformations) == sizeof...(Args)) &&
                  (not_void<std::invoke_result_t<Transformations, Args...[Indexes]>> && ...))
-    auto transform(Transformations&&... transformations) const&& -> emitter::signal<Args...>::
-        template mapped_transformed_signal<std::index_sequence<Indexes...>, Transformations...>
+    auto transform(Transformations&&... transformations)
+        const&& -> mapped_transformed_signal<emitter::signal<Args...>,
+                                             std::index_sequence<Indexes...>,
+                                             Transformations...>
     {
         return { m_signal, std::forward<Transformations>(transformations)... };
     }
@@ -617,16 +622,17 @@ auto emitter::signal<Args...>::partial_transformation(
                                       create_identity(IdentityIndexes)...);
 }
 
-template<signal_arg... Args>
-template<std::size_t... Indexes, class... Transformations>
+template<signal_arg... Args, std::size_t... Indexes, class... Transformations>
     requires(((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>) &&
              ((std::invocable<Transformations, Args...[Indexes]> && ...) &&
               (not_void<std::invoke_result_t<Transformations, Args...[Indexes]>> && ...)))
-class emitter::signal<Args...>::mapped_transformed_signal<std::index_sequence<Indexes...>,
-                                                          Transformations...>
+class mapped_transformed_signal<emitter::signal<Args...>,
+                                std::index_sequence<Indexes...>,
+                                Transformations...>
 {
 public:
-    mapped_transformed_signal(const signal& emitted_signal, Transformations... transformations):
+    mapped_transformed_signal(const emitter::signal<Args...>& emitted_signal,
+                              Transformations... transformations):
         m_signal { emitted_signal },
         m_transformations { std::forward<Transformations>(transformations)... }
     {
@@ -662,7 +668,7 @@ private:
         };
     }
 
-    const signal& m_signal;
+    const emitter::signal<Args...>& m_signal;
     std::tuple<Transformations...> m_transformations;
 };
 
