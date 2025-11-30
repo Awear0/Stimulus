@@ -2,8 +2,10 @@
 #define SIGSLOT_H_
 
 #include <concepts>
+#include <cstddef>
 #include <functional>
 #include <memory>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -186,6 +188,41 @@ public:
         requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
     auto map() -> mapped_signal<Indexes...>;
 
+    template<class... Transformations>
+        requires((std::invocable<Transformations, Args> && ...) &&
+                 (not_void<std::invoke_result_t<Transformations, Args>> && ...))
+    class transformed_signal;
+
+private:
+    template<std::size_t Value>
+    using identity_t = const std::identity&;
+
+    template<class IndexSequence, class... Transformations>
+    struct fill_transformed_signal;
+
+    template<std::size_t... Indexes, class... Transformations>
+    struct fill_transformed_signal<std::index_sequence<Indexes...>, Transformations...>
+    {
+        using type = transformed_signal<Transformations..., identity_t<Indexes>...>;
+    };
+
+    template<class... Transformations>
+    using fill_transformed_signal_t = fill_transformed_signal<
+        std::make_index_sequence<sizeof...(Args) - sizeof...(Transformations)>,
+        Transformations...>::type;
+
+public:
+    template<std::invocable<Args>... Transformations>
+        requires((sizeof...(Transformations) == sizeof...(Args)) &&
+                 (not_void<std::invoke_result_t<Transformations, Args>> && ...))
+    auto transform(Transformations&&... transformations) const
+        -> transformed_signal<Transformations...>;
+
+    template<class... Transformations>
+        requires(sizeof...(Transformations) < sizeof...(Args))
+    auto transform(Transformations&&... transformations) const
+        -> fill_transformed_signal_t<Transformations...>;
+
 private:
     template<std::convertible_to<Args>... EmittedArgs>
     void emit(EmittedArgs&&... emitted_args) const
@@ -214,6 +251,11 @@ private:
     {
         std::erase_if(m_slots, [holder](const auto& slot) { return slot.get() == holder; });
     }
+
+    template<std::size_t... IdentityIndexes, class... Transformations>
+    auto partial_transformation(const std::index_sequence<IdentityIndexes...>&,
+                                Transformations&&... transformations) const
+        -> fill_transformed_signal_t<Transformations...>;
 
     mutable std::vector<std::shared_ptr<connection_holder_implementation>> m_slots {};
 };
@@ -256,8 +298,86 @@ auto emitter::signal<Args...>::map() -> mapped_signal<Indexes...>
 }
 
 template<signal_arg... Args>
-class emitter::signal<Args...>::connection_holder_implementation final: public connection_holder
+template<class... Transformations>
+    requires((std::invocable<Transformations, Args> && ...) &&
+             (not_void<std::invoke_result_t<Transformations, Args>> && ...))
+class emitter::signal<Args...>::transformed_signal
+{
+public:
+    transformed_signal(const signal& emitted_signal, Transformations&&... transformations):
+        m_signal { emitted_signal },
+        m_transformations { std::forward<Transformations>(transformations)... }
+    {
+    }
 
+    template<std::invocable<std::invoke_result_t<Transformations, Args>...> Callable>
+    auto connect(Callable&& callable) && -> connection
+    {
+        return m_signal.connect(
+            create_transformation_lambda(std::make_index_sequence<sizeof...(Transformations)> {},
+                                         std::forward<Callable>(callable)));
+    }
+
+    template<std::invocable<std::invoke_result_t<Transformations, Args>...> Callable>
+    auto connect_once(Callable&& callable) && -> connection
+    {
+        return m_signal.connect_once(
+            create_transformation_lambda(std::make_index_sequence<sizeof...(Transformations)> {},
+                                         std::forward<Callable>(callable)));
+    }
+
+private:
+    template<std::invocable<std::invoke_result_t<Transformations, Args>...> Callable,
+             std::size_t... Indexes>
+    auto create_transformation_lambda(const std::index_sequence<Indexes...>&, Callable&& callable)
+    {
+        return [callable = std::forward<Callable>(callable),
+                transformations = std::move(m_transformations)](Args&&... args)
+        { callable(std::get<Indexes>(transformations)(std::forward<Args>(args))...); };
+    }
+
+    const signal& m_signal;
+    std::tuple<Transformations...> m_transformations;
+};
+
+template<signal_arg... Args>
+template<std::invocable<Args>... Transformations>
+    requires((sizeof...(Transformations) == sizeof...(Args)) &&
+             (not_void<std::invoke_result_t<Transformations, Args>> && ...))
+auto emitter::signal<Args...>::transform(Transformations&&... transformations) const
+    -> transformed_signal<Transformations...>
+{
+    return { *this, std::forward<Transformations>(transformations)... };
+}
+
+template<signal_arg... Args>
+template<class... Transformations>
+    requires(sizeof...(Transformations) < sizeof...(Args))
+auto emitter::signal<Args...>::transform(Transformations&&... transformations) const
+    -> fill_transformed_signal_t<Transformations...>
+{
+    return std::move(*this).partial_transformation(
+        std::make_index_sequence<sizeof...(Args) - sizeof...(Transformations)> {},
+        std::forward<Transformations>(transformations)...);
+}
+
+template<signal_arg... Args>
+template<std::size_t... IdentityIndexes, class... Transformations>
+auto emitter::signal<Args...>::partial_transformation(
+    const std::index_sequence<IdentityIndexes...>&,
+    Transformations&&... transformations) const -> fill_transformed_signal_t<Transformations...>
+{
+    static constexpr std::identity identity {};
+
+    static constexpr auto create_identity { [](std::size_t Index) constexpr -> const std::identity&
+    { return identity; } };
+
+    return std::move(*this).transform(std::forward<Transformations>(transformations)...,
+                                      create_identity(IdentityIndexes)...);
+}
+
+template<signal_arg... Args>
+class emitter::signal<Args...>::connection_holder_implementation final: public connection_holder
 {
 public:
     template<std::convertible_to<signal::slot> Callable>
