@@ -193,3 +193,99 @@ TEST_F(test_transform, int_string_to_nothing)
     EXPECT_EQ(call_args<std::string>.size(), 2);
     EXPECT_EQ(call_args<std::string>.back(), "second");
 }
+
+TEST_F(test_transform, int_string_to_string_string_lambda)
+{
+    int& count = call_count<std::string, std::string>;
+    reset<std::string, std::string>();
+
+    int_string_emitter.generic_signal.transform(to_string).connect(
+        slot_lambda<std::string, std::string>());
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(5, "first");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 0);
+    EXPECT_EQ(call_args<std::string>.size(), 2);
+    EXPECT_EQ(call_args<std::string>.front(), "5");
+    EXPECT_EQ(call_args<std::string>.back(), "first");
+
+    int_string_emitter.generic_emit(6, "second");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 0);
+    EXPECT_EQ(call_args<std::string>.size(), 4);
+    EXPECT_EQ(*std::next(call_args<std::string>.begin(), 2), "6");
+    EXPECT_EQ(call_args<std::string>.back(), "second");
+}
+
+TEST_F(test_transform, int_string_to_string_string_mutable_lambda)
+{
+    int& count = call_count<std::string, std::string>;
+    reset<std::string, std::string>();
+
+    int_string_emitter.generic_signal.transform(to_string).connect(
+        slot_mutable_lambda<std::string, std::string>());
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(5, "first");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 0);
+    EXPECT_EQ(call_args<std::string>.size(), 2);
+    EXPECT_EQ(call_args<std::string>.front(), "5");
+    EXPECT_EQ(call_args<std::string>.back(), "first");
+
+    int_string_emitter.generic_emit(6, "second");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 0);
+    EXPECT_EQ(call_args<std::string>.size(), 4);
+    EXPECT_EQ(*std::next(call_args<std::string>.begin(), 2), "6");
+    EXPECT_EQ(call_args<std::string>.back(), "second");
+}
+
+TEST_F(test_transform, int_string_to_string_string_functor)
+{
+    int& count = call_count<std::string, std::string>;
+    reset<std::string, std::string>();
+
+    int_string_emitter.generic_signal.transform(to_string).connect(
+        slot_functor<std::string, std::string>());
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(5, "first");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 0);
+    EXPECT_EQ(call_args<std::string>.size(), 2);
+    EXPECT_EQ(call_args<std::string>.front(), "5");
+    EXPECT_EQ(call_args<std::string>.back(), "first");
+
+    int_string_emitter.generic_emit(6, "second");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 0);
+    EXPECT_EQ(call_args<std::string>.size(), 4);
+    EXPECT_EQ(*std::next(call_args<std::string>.begin(), 2), "6");
+    EXPECT_EQ(call_args<std::string>.back(), "second");
+}
+
+TEST_F(test_transform, int_string_to_string_string_non_const_functor)
+{
+    int& count = call_count<std::string, std::string>;
+    reset<std::string, std::string>();
+
+    int_string_emitter.generic_signal.transform(to_string).connect(
+        slot_non_const_functor<std::string, std::string>());
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(5, "first");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 0);
+    EXPECT_EQ(call_args<std::string>.size(), 2);
+    EXPECT_EQ(call_args<std::string>.front(), "5");
+    EXPECT_EQ(call_args<std::string>.back(), "first");
+
+    int_string_emitter.generic_emit(6, "second");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 0);
+    EXPECT_EQ(call_args<std::string>.size(), 4);
+    EXPECT_EQ(*std::next(call_args<std::string>.begin(), 2), "6");
+    EXPECT_EQ(call_args<std::string>.back(), "second");
+}

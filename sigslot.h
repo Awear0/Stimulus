@@ -274,18 +274,23 @@ public:
     template<std::invocable<Args...[Indexes]...> Callable>
     auto connect(Callable&& callable) const&& -> connection
     {
-        return m_signal.connect([callable = std::forward<Callable>(callable)](Args&&... args)
-        { callable(std::forward<Args...[Indexes]>(args...[Indexes])...); });
+        return m_signal.connect(create_map_lambda(std::forward<Callable>(callable)));
     }
 
     template<std::invocable<Args...[Indexes]...> Callable>
     auto connect_once(Callable&& callable) const&& -> connection
     {
-        return m_signal.connect_once([callable = std::forward<Callable>(callable)](Args&&... args)
-        { callable(std::forward<Args...[Indexes]>(args...[Indexes])...); });
+        return m_signal.connect_once(create_map_lambda(std::forward<Callable>(callable)));
     }
 
 private:
+    template<std::invocable<Args...[Indexes]...> Callable>
+    auto create_map_lambda(Callable&& callable) const
+    {
+        return [callable = std::forward<Callable>(callable)](Args&&... args) mutable
+        { callable(std::forward<Args...[Indexes]>(args...[Indexes])...); };
+    }
+
     const signal& m_signal;
 };
 
@@ -332,7 +337,7 @@ private:
     auto create_transformation_lambda(const std::index_sequence<Indexes...>&, Callable&& callable)
     {
         return [callable = std::forward<Callable>(callable),
-                transformations = std::move(m_transformations)](Args&&... args)
+                transformations = std::move(m_transformations)](Args&&... args) mutable
         { callable(std::get<Indexes>(transformations)(std::forward<Args>(args))...); };
     }
 
