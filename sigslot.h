@@ -46,6 +46,9 @@ class connection;
 template<class SequenceIndex, signal_arg... Args>
 class mapped_signal;
 
+template<class Signal, class... Transformations>
+class transformed_signal;
+
 class emitter
 {
 public:
@@ -59,6 +62,9 @@ protected:
 
     template<class SequenceIndex, signal_arg... Args>
     friend class mapped_signal;
+
+    template<class Signal, class... Transformations>
+    friend class transformed_signal;
 
     template<class Emitter, signal_arg... Args, std::convertible_to<Args>... EmittedArgs>
     void emit(this const Emitter& self,
@@ -254,11 +260,6 @@ public:
         requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
     auto map() const -> mapped_signal<std::index_sequence<Indexes...>, Args...>;
 
-    template<class... Transformations>
-        requires((std::invocable<Transformations, Args> && ...) &&
-                 (not_void<std::invoke_result_t<Transformations, Args>> && ...))
-    class transformed_signal;
-
     template<class IndexSequence, class... Transformations>
     class mapped_transformed_signal;
 
@@ -272,7 +273,7 @@ private:
     template<std::size_t... Indexes, class... Transformations>
     struct fill_transformed_signal<std::index_sequence<Indexes...>, Transformations...>
     {
-        using type = transformed_signal<Transformations..., identity_t<Indexes>...>;
+        using type = transformed_signal<signal, Transformations..., identity_t<Indexes>...>;
     };
 
     template<class... Transformations>
@@ -285,7 +286,7 @@ public:
         requires((sizeof...(Transformations) == sizeof...(Args)) &&
                  (not_void<std::invoke_result_t<Transformations, Args>> && ...))
     auto transform(Transformations&&... transformations) const
-        -> transformed_signal<Transformations...>;
+        -> transformed_signal<signal, Transformations...>;
 
     template<class... Transformations>
         requires(sizeof...(Transformations) < sizeof...(Args))
@@ -419,14 +420,14 @@ auto emitter::signal<Args...>::map() const
     return { *this };
 }
 
-template<signal_arg... Args>
-template<class... Transformations>
+template<signal_arg... Args, class... Transformations>
     requires((std::invocable<Transformations, Args> && ...) &&
              (not_void<std::invoke_result_t<Transformations, Args>> && ...))
-class emitter::signal<Args...>::transformed_signal
+class transformed_signal<emitter::signal<Args...>, Transformations...>
 {
 public:
-    transformed_signal(const signal& emitted_signal, Transformations&&... transformations):
+    transformed_signal(const emitter::signal<Args...>& emitted_signal,
+                       Transformations&&... transformations):
         m_signal { emitted_signal },
         m_transformations { std::forward<Transformations>(transformations)... }
     {
@@ -458,7 +459,7 @@ private:
         { callable(std::get<Indexes>(transformations)(std::forward<Args>(args))...); };
     }
 
-    const signal& m_signal;
+    const emitter::signal<Args...>& m_signal;
     std::tuple<Transformations...> m_transformations;
 };
 
@@ -467,7 +468,7 @@ template<std::invocable<Args>... Transformations>
     requires((sizeof...(Transformations) == sizeof...(Args)) &&
              (not_void<std::invoke_result_t<Transformations, Args>> && ...))
 auto emitter::signal<Args...>::transform(Transformations&&... transformations) const
-    -> transformed_signal<Transformations...>
+    -> transformed_signal<signal<Args...>, Transformations...>
 {
     return { *this, std::forward<Transformations>(transformations)... };
 }
