@@ -596,7 +596,10 @@ private:
         {
             return [callable = std::forward<Callable>(callable),
                     transformations = std::move(m_transformations)](Args&&... args) mutable
-            { callable(std::get<Indexes>(transformations)(std::forward<Args>(args))...); };
+            {
+                callable(
+                    std::invoke(std::get<Indexes>(transformations), std::forward<Args>(args))...);
+            };
         }(std::make_index_sequence<sizeof...(Transformations)> {});
     }
 
@@ -650,8 +653,8 @@ private:
             return [callable = std::move(callable),
                     transformations = std::move(transformations)](Args&&... args) mutable
             {
-                callable(std::get<TransformationIndexes>(transformations)(
-                    std::forward<Args...[Indexes]>(args...[Indexes]))...);
+                callable(std::invoke(std::get<TransformationIndexes>(transformations),
+                                     std::forward<Args...[Indexes]>(args...[Indexes]))...);
             };
         }(std::make_index_sequence<sizeof...(Transformations)> {});
     }
