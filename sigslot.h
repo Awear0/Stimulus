@@ -203,19 +203,27 @@ protected:
 
 protected:
     // TODO AROSS: Handle automatic removal when receiver is destroyed
-    template<class Receiver, signal_arg... ReceiverArgs, class Emitter>
+    template<class Receiver,
+             signal_arg... ReceiverArgs,
+             class Emitter,
+             execution_policy Policy = synchronous_policy>
         requires(signal_transformation<std::remove_cvref_t<Emitter>> ||
                  is_signal_v<std::remove_cvref_t<Emitter>>)
     auto connect(this const Receiver& self,
                  Emitter&& emitter,
-                 signal<ReceiverArgs...> Receiver::* receiver_signal) -> connection;
+                 signal<ReceiverArgs...> Receiver::* receiver_signal,
+                 Policy&& policy = {}) -> connection;
 
-    template<class Receiver, signal_arg... ReceiverArgs, class Emitter>
+    template<class Receiver,
+             signal_arg... ReceiverArgs,
+             class Emitter,
+             execution_policy Policy = synchronous_policy>
         requires(signal_transformation<std::remove_cvref_t<Emitter>> ||
                  is_signal_v<std::remove_cvref_t<Emitter>>)
     auto connect_once(this const Receiver& self,
                       Emitter&& emitter,
-                      signal<ReceiverArgs...> Receiver::* receiver_signal) -> connection;
+                      signal<ReceiverArgs...> Receiver::* receiver_signal,
+                      Policy&& policy = {}) -> connection;
 
 private:
     template<class Receiver, signal_arg... ReceiverArgs>
@@ -428,16 +436,20 @@ public:
     {
     }
 
-    template<std::invocable<Args...[Indexes]...> Callable>
-    auto connect(Callable&& callable) const&& -> connection
+    template<std::invocable<Args...[Indexes]...> Callable,
+             execution_policy Policy = synchronous_policy>
+    auto connect(Callable&& callable, Policy&& policy = {}) const&& -> connection
     {
-        return m_signal.connect(forwarding_lambda(std::forward<Callable>(callable)));
+        return m_signal.connect(forwarding_lambda(std::forward<Callable>(callable)),
+                                std::forward<Policy>(policy));
     }
 
-    template<std::invocable<Args...[Indexes]...> Callable>
-    auto connect_once(Callable&& callable) const&& -> connection
+    template<std::invocable<Args...[Indexes]...> Callable,
+             execution_policy Policy = synchronous_policy>
+    auto connect_once(Callable&& callable, Policy&& policy = {}) const&& -> connection
     {
-        return m_signal.connect_once(forwarding_lambda(std::forward<Callable>(callable)));
+        return m_signal.connect_once(forwarding_lambda(std::forward<Callable>(callable)),
+                                     std::forward<Policy>(policy));
     }
 
     template<std::invocable<Args...[Indexes]>... Transformations>
@@ -502,16 +514,20 @@ public:
     {
     }
 
-    template<std::invocable<std::invoke_result_t<Transformations, Args>...> Callable>
-    auto connect(Callable&& callable) && -> connection
+    template<std::invocable<std::invoke_result_t<Transformations, Args>...> Callable,
+             execution_policy Policy = synchronous_policy>
+    auto connect(Callable&& callable, Policy&& policy = {}) && -> connection
     {
-        return m_signal.connect(forwarding_lambda(std::forward<Callable>(callable)));
+        return m_signal.connect(forwarding_lambda(std::forward<Callable>(callable)),
+                                std::forward<Policy>(policy));
     }
 
-    template<std::invocable<std::invoke_result_t<Transformations, Args>...> Callable>
-    auto connect_once(Callable&& callable) && -> connection
+    template<std::invocable<std::invoke_result_t<Transformations, Args>...> Callable,
+             execution_policy Policy = synchronous_policy>
+    auto connect_once(Callable&& callable, Policy&& policy = {}) && -> connection
     {
-        return m_signal.connect_once(forwarding_lambda(std::forward<Callable>(callable)));
+        return m_signal.connect_once(forwarding_lambda(std::forward<Callable>(callable)),
+                                     std::forward<Policy>(policy));
     }
 
 private:
@@ -548,16 +564,20 @@ public:
     {
     }
 
-    template<std::invocable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable>
-    auto connect(Callable&& callable) && -> connection
+    template<std::invocable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable,
+             execution_policy Policy = synchronous_policy>
+    auto connect(Callable&& callable, Policy&& policy = {}) && -> connection
     {
-        return m_signal.connect(forwarding_lambda(std::forward<Callable>(callable)));
+        return m_signal.connect(forwarding_lambda(std::forward<Callable>(callable)),
+                                std::forward<Policy>(policy));
     }
 
-    template<std::invocable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable>
-    auto connect_once(Callable&& callable) && -> connection
+    template<std::invocable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable,
+             execution_policy Policy = synchronous_policy>
+    auto connect_once(Callable&& callable, Policy&& policy = {}) && -> connection
     {
-        return m_signal.connect_once(forwarding_lambda(std::forward<Callable>(callable)));
+        return m_signal.connect_once(forwarding_lambda(std::forward<Callable>(callable)),
+                                     std::forward<Policy>(policy));
     }
 
 private:
@@ -656,37 +676,43 @@ private:
 
 // ### emitter implementation
 
-template<class Receiver, signal_arg... ReceiverArgs, class Emitter>
+template<class Receiver, signal_arg... ReceiverArgs, class Emitter, execution_policy Policy>
     requires(signal_transformation<std::remove_cvref_t<Emitter>> ||
              emitter::is_signal_v<std::remove_cvref_t<Emitter>>)
 auto emitter::connect(this const Receiver& self,
                       Emitter&& emitter,
-                      signal<ReceiverArgs...> Receiver::* receiver_signal) -> connection
+                      signal<ReceiverArgs...> Receiver::* receiver_signal,
+                      Policy&& policy) -> connection
 {
     if constexpr (signal_transformation<std::remove_cvref_t<Emitter>>)
     {
-        return std::forward<Emitter>(emitter).connect(self.forwarding_lambda(receiver_signal));
+        return std::forward<Emitter>(emitter).connect(self.forwarding_lambda(receiver_signal),
+                                                      std::forward<Policy>(policy));
     }
     else
     {
-        return emitter.connect(self.forwarding_lambda(receiver_signal));
+        return emitter.connect(self.forwarding_lambda(receiver_signal),
+                               std::forward<Policy>(policy));
     }
 }
 
-template<class Receiver, signal_arg... ReceiverArgs, class Emitter>
+template<class Receiver, signal_arg... ReceiverArgs, class Emitter, execution_policy Policy>
     requires(signal_transformation<std::remove_cvref_t<Emitter>> ||
              emitter::is_signal_v<std::remove_cvref_t<Emitter>>)
 auto emitter::connect_once(this const Receiver& self,
                            Emitter&& emitter,
-                           signal<ReceiverArgs...> Receiver::* receiver_signal) -> connection
+                           signal<ReceiverArgs...> Receiver::* receiver_signal,
+                           Policy&& policy) -> connection
 {
     if constexpr (signal_transformation<std::remove_cvref_t<Emitter>>)
     {
-        return std::forward<Emitter>(emitter).connect_once(self.forwarding_lambda(receiver_signal));
+        return std::forward<Emitter>(emitter).connect_once(self.forwarding_lambda(receiver_signal),
+                                                           std::forward<Policy>(policy));
     }
     else
     {
-        return emitter.connect_once(self.forwarding_lambda(receiver_signal));
+        return emitter.connect_once(self.forwarding_lambda(receiver_signal),
+                                    std::forward<Policy>(policy));
     }
 }
 
