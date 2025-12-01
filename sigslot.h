@@ -8,6 +8,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 // ### Helpers
@@ -21,7 +22,7 @@ concept execution_policy = requires(ExecutionPolicy policy) {
 struct synchronous_policy
 {
     template<std::invocable Invocable>
-    void execute(Invocable&& invocable)
+    void execute(Invocable&& invocable) const
     {
         invocable();
     }
@@ -64,10 +65,58 @@ private:
 
 class execution_policy_holder
 {
+    template<std::invocable Callable>
+    struct policy_visitor_executor
+    {
+        policy_visitor_executor(Callable&& callable):
+            m_callable { std::forward<Callable>(callable) }
+        {
+        }
+
+        void operator()(const synchronous_policy& policy)
+        {
+            policy.execute(std::forward<Callable>(m_callable));
+        }
+
+        void operator()(
+            const std::unique_ptr<execution_policy_holder_implementation_interface>& policy)
+        {
+            policy->execute(std::forward<Callable>(m_callable));
+        }
+
+        Callable&& m_callable;
+    };
+
+    struct policy_visitor_synchronicity_checker
+    {
+        static auto constexpr operator()(const synchronous_policy& policy) -> bool
+        {
+            return synchronous_policy::is_synchronous;
+        }
+
+        static auto operator()(
+            const std::unique_ptr<execution_policy_holder_implementation_interface>& policy) -> bool
+        {
+            return policy->is_synchronous();
+        }
+    };
+
+    static constexpr policy_visitor_synchronicity_checker synchronicity_checker {};
+
 public:
+    execution_policy_holder(const synchronous_policy& policy):
+        m_policy { policy }
+    {
+    }
+
+    execution_policy_holder(synchronous_policy&& policy):
+        m_policy { std::move(policy) }
+    {
+    }
+
     template<execution_policy Policy>
     execution_policy_holder(Policy&& policy):
-        m_policy_holder { std::make_unique<execution_policy_holder_implementation<Policy>>(
+        m_policy { std::make_unique<execution_policy_holder_implementation<Policy>>(
             std::forward<Policy>(policy)) }
     {
     }
@@ -75,16 +124,18 @@ public:
     template<std::invocable Invocable>
     void execute(Invocable&& invocable)
     {
-        m_policy_holder->execute(std::forward<Invocable>(invocable));
+        std::visit(policy_visitor_executor { std::forward<Invocable>(invocable) }, m_policy);
     }
 
     auto is_synchronous() const -> bool
     {
-        return m_policy_holder->is_synchronous();
+        return std::visit(synchronicity_checker, m_policy);
     }
 
 private:
-    std::unique_ptr<execution_policy_holder_implementation_interface> m_policy_holder;
+    std::variant<synchronous_policy,
+                 std::unique_ptr<execution_policy_holder_implementation_interface>>
+        m_policy;
 };
 
 template<class NotVoid>
@@ -111,7 +162,7 @@ struct all_different_implementation<Value>: std::true_type
 
 template<std::size_t Value, std::size_t... Tail>
 struct all_different_implementation<Value, Tail...>
-    : std::conditional_t<((Value == Tail) || ...) || !all_different_implementation_t<Tail...>,
+    : std::conditional_t<((Value == Tail) || ...),
                          std::false_type,
                          all_different_implementation<Tail...>>
 {
@@ -416,12 +467,19 @@ private:
         std::erase_if(m_slots, [holder](const auto& slot) { return slot.get() == holder; });
     }
 
+    // TODO AROSS: Find a way to clean all the signals from emitting sources.
+    void add_emitting_source(connection source) const
+    {
+        m_emitting_sources.emplace_back(std::move(source));
+    }
+
     template<std::size_t... IdentityIndexes, class... Transformations>
     auto partial_transformation(const std::index_sequence<IdentityIndexes...>&,
                                 Transformations&&... transformations) const
         -> fill_transformed_signal_t<Transformations...>;
 
     mutable std::vector<std::shared_ptr<connection_holder_implementation>> m_slots {};
+    mutable std::vector<scoped_connection> m_emitting_sources {};
 };
 
 // ### mapped_signal definition
@@ -686,13 +744,18 @@ auto emitter::connect(this const Receiver& self,
 {
     if constexpr (signal_transformation<std::remove_cvref_t<Emitter>>)
     {
-        return std::forward<Emitter>(emitter).connect(self.forwarding_lambda(receiver_signal),
-                                                      std::forward<Policy>(policy));
+        auto connection { std::forward<Emitter>(emitter).connect(
+            self.forwarding_lambda(receiver_signal),
+            std::forward<Policy>(policy)) };
+        (self.*receiver_signal).add_emitting_source(connection);
+        return connection;
     }
     else
     {
-        return emitter.connect(self.forwarding_lambda(receiver_signal),
-                               std::forward<Policy>(policy));
+        auto connection { emitter.connect(self.forwarding_lambda(receiver_signal),
+                                          std::forward<Policy>(policy)) };
+        (self.*receiver_signal).add_emitting_source(connection);
+        return connection;
     }
 }
 
@@ -706,13 +769,18 @@ auto emitter::connect_once(this const Receiver& self,
 {
     if constexpr (signal_transformation<std::remove_cvref_t<Emitter>>)
     {
-        return std::forward<Emitter>(emitter).connect_once(self.forwarding_lambda(receiver_signal),
-                                                           std::forward<Policy>(policy));
+        auto connection { std::forward<Emitter>(emitter).connect_once(
+            self.forwarding_lambda(receiver_signal),
+            std::forward<Policy>(policy)) };
+        (self.*receiver_signal).add_emitting_source(connection);
+        return connection;
     }
     else
     {
-        return emitter.connect_once(self.forwarding_lambda(receiver_signal),
-                                    std::forward<Policy>(policy));
+        auto connection { emitter.connect_once(self.forwarding_lambda(receiver_signal),
+                                               std::forward<Policy>(policy)) };
+        (self.*receiver_signal).add_emitting_source(connection);
+        return connection;
     }
 }
 

@@ -531,3 +531,22 @@ TEST_F(test_forward_signal, double_swamp_forwarding)
     EXPECT_EQ(call_args<std::string>.size(), 2);
     EXPECT_EQ(call_args<std::string>.back(), "47");
 }
+
+TEST_F(test_forward_signal, disconnect_on_receiver_destruction)
+{
+    int& count = call_count<>;
+    reset<>();
+
+    {
+        forwarding_emitter<> receiver(empty_emitter.generic_signal);
+        receiver.m_signal.connect(slot_function<>);
+    }
+
+    EXPECT_EQ(count, 0);
+
+    empty_emitter.generic_emit();
+    EXPECT_EQ(count, 0);
+
+    empty_emitter.generic_emit();
+    EXPECT_EQ(count, 0);
+}
