@@ -12,6 +12,81 @@
 
 // ### Helpers
 
+template<class ExecutionPolicy>
+concept execution_policy = requires(ExecutionPolicy policy) {
+    policy.execute(std::function<void()> {});
+    { std::remove_cvref_t<ExecutionPolicy>::is_synchronous } -> std::convertible_to<bool>;
+};
+
+struct synchronous_policy
+{
+    template<std::invocable Invocable>
+    void execute(Invocable&& invocable)
+    {
+        invocable();
+    }
+
+    static constexpr bool is_synchronous { true };
+};
+
+class execution_policy_holder_implementation_interface
+{
+public:
+    virtual ~execution_policy_holder_implementation_interface() = default;
+
+    virtual void execute(std::function<void()> invocable) = 0;
+    virtual auto is_synchronous() const -> bool = 0;
+};
+
+template<execution_policy Policy>
+class execution_policy_holder_implementation
+    : public execution_policy_holder_implementation_interface
+{
+public:
+    execution_policy_holder_implementation(Policy&& policy):
+        m_policy { std::forward<Policy>(policy) }
+    {
+    }
+
+    void execute(std::function<void()> invocable) override
+    {
+        m_policy.execute(std::move(invocable));
+    }
+
+    auto is_synchronous() const -> bool override
+    {
+        return std::remove_cvref_t<Policy>::is_synchronous;
+    }
+
+private:
+    Policy m_policy;
+};
+
+class execution_policy_holder
+{
+public:
+    template<execution_policy Policy>
+    execution_policy_holder(Policy&& policy):
+        m_policy_holder { std::make_unique<execution_policy_holder_implementation<Policy>>(
+            std::forward<Policy>(policy)) }
+    {
+    }
+
+    template<std::invocable Invocable>
+    void execute(Invocable&& invocable)
+    {
+        m_policy_holder->execute(std::forward<Invocable>(invocable));
+    }
+
+    auto is_synchronous() const -> bool
+    {
+        return m_policy_holder->is_synchronous();
+    }
+
+private:
+    std::unique_ptr<execution_policy_holder_implementation_interface> m_policy_holder;
+};
+
 template<class NotVoid>
 concept not_void = (!std::same_as<NotVoid, void>);
 
@@ -38,7 +113,7 @@ template<std::size_t Value, std::size_t... Tail>
 struct all_different_implementation<Value, Tail...>
     : std::conditional_t<((Value == Tail) || ...) || !all_different_implementation_t<Tail...>,
                          std::false_type,
-                         std::true_type>
+                         all_different_implementation<Tail...>>
 {
 };
 
@@ -262,11 +337,11 @@ public:
     friend emitter;
     using slot = std::function<void(Args...)>;
 
-    template<std::invocable<Args...> Callable>
-    auto connect(Callable&& callable) const -> connection;
+    template<std::invocable<Args...> Callable, execution_policy Policy = synchronous_policy>
+    auto connect(Callable&& callable, Policy&& policy = {}) const -> connection;
 
-    template<std::invocable<Args...> Callable>
-    auto connect_once(Callable&& callable) const -> connection;
+    template<std::invocable<Args...> Callable, execution_policy Policy = synchronous_policy>
+    auto connect_once(Callable&& callable, Policy&& policy = {}) const -> connection;
 
     template<std::size_t... Indexes>
         requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
@@ -512,13 +587,20 @@ private:
 template<signal_arg... Args>
 class emitter::signal<Args...>::connection_holder_implementation final: public connection_holder
 {
+    template<class T>
+    using ref_or_value = std::conditional_t<std::is_lvalue_reference_v<T>,
+                                            std::reference_wrapper<std::remove_reference_t<T>>,
+                                            T>;
+
 public:
-    template<std::convertible_to<signal::slot> Callable>
+    template<std::convertible_to<signal::slot> Callable, execution_policy Policy>
     connection_holder_implementation(const signal& connected_signal,
                                      Callable&& callable,
+                                     Policy&& policy,
                                      bool single_shot = false):
-        m_signal { connected_signal },
         m_slot { std::forward<Callable>(callable) },
+        m_signal { connected_signal },
+        m_policy(std::forward<Policy>(policy)),
         m_single_shot { single_shot }
     {
     }
@@ -535,7 +617,18 @@ public:
         {
             disconnect();
         }
-        m_slot(std::forward<EmittedArgs>(args)...);
+
+        if (m_policy.is_synchronous())
+        {
+            m_policy.execute([&] { m_slot(std::forward<EmittedArgs>(args)...); });
+        }
+        else
+        {
+            m_policy.execute(
+                [slot = m_slot,
+                 ... args = ref_or_value<Args>(std::forward<EmittedArgs>(args))] mutable
+            { slot(std::forward<Args>(args)...); });
+        }
     }
 
     void disconnect() override
@@ -556,6 +649,7 @@ public:
 private:
     signal::slot m_slot;
     const signal& m_signal;
+    execution_policy_holder m_policy;
     bool m_suspended { false };
     bool m_single_shot;
 };
@@ -652,23 +746,26 @@ auto emitter::signal<Args...>::partial_transformation(
 }
 
 template<signal_arg... Args>
-template<std::invocable<Args...> Callable>
-auto emitter::signal<Args...>::connect(Callable&& callable) const -> connection
+template<std::invocable<Args...> Callable, execution_policy Policy>
+auto emitter::signal<Args...>::connect(Callable&& callable, Policy&& policy) const -> connection
 {
     m_slots.emplace_back(
         std::make_shared<connection_holder_implementation>(*this,
-                                                           std::forward<Callable>(callable)));
+                                                           std::forward<Callable>(callable),
+                                                           std::forward<Policy>(policy)));
 
     return { m_slots.back() };
 }
 
 template<signal_arg... Args>
-template<std::invocable<Args...> Callable>
-auto emitter::signal<Args...>::connect_once(Callable&& callable) const -> connection
+template<std::invocable<Args...> Callable, execution_policy Policy>
+auto emitter::signal<Args...>::connect_once(Callable&& callable, Policy&& policy) const
+    -> connection
 {
     m_slots.emplace_back(
         std::make_shared<connection_holder_implementation>(*this,
                                                            std::forward<Callable>(callable),
+                                                           std::forward<Policy>(policy),
                                                            true));
 
     return { m_slots.back() };

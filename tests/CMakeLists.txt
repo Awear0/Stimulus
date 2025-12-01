@@ -14,6 +14,7 @@ add_executable(tests
     test_map_transform.cpp
     test_forward_signal.cpp
     test_all_different.cpp
+    test_execution_policy.cpp
 )
 
 target_link_libraries(tests
