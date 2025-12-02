@@ -462,6 +462,26 @@ private:
     connection m_connection;
 };
 
+// ### connectable
+
+class connectable
+{
+public:
+    template<class Self, class Callable, execution_policy Policy = synchronous_policy>
+    auto connect(this Self&& self, Callable&& callable, Policy&& policy = {}) -> connection
+    {
+        return self.m_signal.connect(self.forwarding_lambda(std::forward<Callable>(callable)),
+                                     std::forward<Policy>(policy));
+    }
+
+    template<class Self, class Callable, execution_policy Policy = synchronous_policy>
+    auto connect_once(this Self&& self, Callable&& callable, Policy&& policy = {}) -> connection
+    {
+        return self.m_signal.connect_once(self.forwarding_lambda(std::forward<Callable>(callable)),
+                                          std::forward<Policy>(policy));
+    }
+};
+
 // ### Signal definition
 
 // TODO AROSS: operator= strategy for signal
@@ -562,28 +582,14 @@ private:
 
 template<std::size_t... Indexes, class... Args>
     requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
-class mapped_signal<std::index_sequence<Indexes...>, Args...>
+class mapped_signal<std::index_sequence<Indexes...>, Args...>: public connectable
 {
 public:
+    friend connectable;
+
     mapped_signal(const emitter::signal<Args...>& emitted_signal):
         m_signal { emitted_signal }
     {
-    }
-
-    template<partially_callable<Args...[Indexes]...> Callable,
-             execution_policy Policy = synchronous_policy>
-    auto connect(Callable&& callable, Policy&& policy = {}) const&& -> connection
-    {
-        return m_signal.connect(forwarding_lambda(std::forward<Callable>(callable)),
-                                std::forward<Policy>(policy));
-    }
-
-    template<partially_callable<Args...[Indexes]...> Callable,
-             execution_policy Policy = synchronous_policy>
-    auto connect_once(Callable&& callable, Policy&& policy = {}) const&& -> connection
-    {
-        return m_signal.connect_once(forwarding_lambda(std::forward<Callable>(callable)),
-                                     std::forward<Policy>(policy));
     }
 
     template<std::invocable<Args...[Indexes]>... Transformations>
@@ -636,32 +642,17 @@ private:
 template<signal_arg... Args, class... Transformations>
     requires((std::invocable<Transformations, Args> && ...) &&
              (not_void<std::invoke_result_t<Transformations, Args>> && ...))
-class transformed_signal<emitter::signal<Args...>, Transformations...>
+class transformed_signal<emitter::signal<Args...>, Transformations...>: public connectable
 {
 public:
     friend emitter;
+    friend connectable;
 
     transformed_signal(const emitter::signal<Args...>& emitted_signal,
                        Transformations&&... transformations):
         m_signal { emitted_signal },
         m_transformations { std::forward<Transformations>(transformations)... }
     {
-    }
-
-    template<partially_callable<std::invoke_result_t<Transformations, Args>...> Callable,
-             execution_policy Policy = synchronous_policy>
-    auto connect(Callable&& callable, Policy&& policy = {}) && -> connection
-    {
-        return m_signal.connect(forwarding_lambda(std::forward<Callable>(callable)),
-                                std::forward<Policy>(policy));
-    }
-
-    template<partially_callable<std::invoke_result_t<Transformations, Args>...> Callable,
-             execution_policy Policy = synchronous_policy>
-    auto connect_once(Callable&& callable, Policy&& policy = {}) && -> connection
-    {
-        return m_signal.connect_once(forwarding_lambda(std::forward<Callable>(callable)),
-                                     std::forward<Policy>(policy));
     }
 
 private:
@@ -692,32 +683,16 @@ template<signal_arg... Args, std::size_t... Indexes, class... Transformations>
               (not_void<std::invoke_result_t<Transformations, Args...[Indexes]>> && ...)))
 class mapped_transformed_signal<emitter::signal<Args...>,
                                 std::index_sequence<Indexes...>,
-                                Transformations...>
+                                Transformations...>: public connectable
 {
 public:
+    friend connectable;
+
     mapped_transformed_signal(const emitter::signal<Args...>& emitted_signal,
                               Transformations... transformations):
         m_signal { emitted_signal },
         m_transformations { std::forward<Transformations>(transformations)... }
     {
-    }
-
-    template<
-        partially_callable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable,
-        execution_policy Policy = synchronous_policy>
-    auto connect(Callable&& callable, Policy&& policy = {}) && -> connection
-    {
-        return m_signal.connect(forwarding_lambda(std::forward<Callable>(callable)),
-                                std::forward<Policy>(policy));
-    }
-
-    template<
-        partially_callable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable,
-        execution_policy Policy = synchronous_policy>
-    auto connect_once(Callable&& callable, Policy&& policy = {}) && -> connection
-    {
-        return m_signal.connect_once(forwarding_lambda(std::forward<Callable>(callable)),
-                                     std::forward<Policy>(policy));
     }
 
 private:
