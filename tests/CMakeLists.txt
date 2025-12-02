@@ -15,6 +15,8 @@ add_executable(tests
     test_forward_signal.cpp
     test_all_different.cpp
     test_execution_policy.cpp
+    test_partial_call.cpp
+    test_partial_connection.cpp
 )
 
 target_link_libraries(tests

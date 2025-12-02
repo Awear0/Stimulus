@@ -171,6 +171,82 @@ struct all_different_implementation<Value, Tail...>
 template<std::size_t... Values>
 concept all_different = all_different_implementation_t<Values...>;
 
+// ### Partial call
+
+template<class Callable, class... Args>
+struct is_partially_callable;
+
+template<class Callable, class... Args>
+constexpr bool is_partially_callable_v { is_partially_callable<Callable, Args...>::value };
+
+template<class Callable, std::size_t Count, class... Args>
+struct is_partially_callable_with_argument_count;
+
+template<class Callable, class... Args>
+struct is_partially_callable_with_argument_count<Callable, 0, Args...>: std::is_invocable<Callable>
+{
+};
+
+template<class Callable, class IndexSequence, class... Args>
+struct is_partially_callable_with_argument_count_impl;
+
+template<class Callable, std::size_t... Indexes, class... Args>
+struct is_partially_callable_with_argument_count_impl<Callable,
+                                                      std::index_sequence<Indexes...>,
+                                                      Args...>
+    : std::is_invocable<Callable, Args...[Indexes]...>
+{
+};
+
+template<class Callable, std::size_t Count, class... Args>
+struct is_partially_callable_with_argument_count
+    : std::conditional_t<
+          is_partially_callable_with_argument_count_impl<Callable,
+                                                         std::make_index_sequence<Count>,
+                                                         Args...>::value,
+          std::true_type,
+          is_partially_callable_with_argument_count<Callable, Count - 1, Args...>>
+{
+};
+
+template<class Callable, class... Args>
+struct is_partially_callable
+    : is_partially_callable_with_argument_count<Callable, sizeof...(Args), Args...>
+{
+};
+
+template<class Callable, class... Args>
+concept partially_callable = is_partially_callable_v<Callable, Args...>;
+
+template<class Callable, class... Args, std::size_t... Indexes>
+    requires partially_callable<Callable, Args...>
+constexpr auto
+    partial_call_impl(Callable&& callable, std::index_sequence<Indexes...>, Args&&... args)
+{
+    if constexpr (std::invocable<Callable, Args...[Indexes]...>)
+    {
+        return std::invoke(std::forward<Callable>(callable),
+                           std::forward<Args...[Indexes]>(args...[Indexes])...);
+    }
+    else
+    {
+        constexpr std::make_index_sequence<sizeof...(Indexes) - 1> index_sequence {};
+        return partial_call_impl(std::forward<Callable>(callable),
+                                 index_sequence,
+                                 std::forward<Args>(args)...);
+    }
+}
+
+template<class Callable, class... Args>
+    requires partially_callable<Callable, Args...>
+constexpr auto partial_call(Callable&& callable, Args&&... args)
+{
+    constexpr std::make_index_sequence<sizeof...(Args)> index_sequence {};
+    return partial_call_impl(std::forward<Callable>(callable),
+                             index_sequence,
+                             std::forward<Args>(args)...);
+}
+
 // ### Forward declaration
 
 class connection;
@@ -396,10 +472,10 @@ public:
     friend emitter;
     using slot = std::function<void(Args...)>;
 
-    template<std::invocable<Args...> Callable, execution_policy Policy = synchronous_policy>
+    template<partially_callable<Args...> Callable, execution_policy Policy = synchronous_policy>
     auto connect(Callable&& callable, Policy&& policy = {}) const -> connection;
 
-    template<std::invocable<Args...> Callable, execution_policy Policy = synchronous_policy>
+    template<partially_callable<Args...> Callable, execution_policy Policy = synchronous_policy>
     auto connect_once(Callable&& callable, Policy&& policy = {}) const -> connection;
 
     template<std::size_t... Indexes>
@@ -494,7 +570,7 @@ public:
     {
     }
 
-    template<std::invocable<Args...[Indexes]...> Callable,
+    template<partially_callable<Args...[Indexes]...> Callable,
              execution_policy Policy = synchronous_policy>
     auto connect(Callable&& callable, Policy&& policy = {}) const&& -> connection
     {
@@ -502,7 +578,7 @@ public:
                                 std::forward<Policy>(policy));
     }
 
-    template<std::invocable<Args...[Indexes]...> Callable,
+    template<partially_callable<Args...[Indexes]...> Callable,
              execution_policy Policy = synchronous_policy>
     auto connect_once(Callable&& callable, Policy&& policy = {}) const&& -> connection
     {
@@ -545,11 +621,11 @@ private:
                                           create_identity(IdentityIndexes)...);
     }
 
-    template<std::invocable<Args...[Indexes]...> Callable>
+    template<partially_callable<Args...[Indexes]...> Callable>
     auto forwarding_lambda(Callable&& callable) const
     {
         return [callable = std::forward<Callable>(callable)](Args&&... args) mutable
-        { callable(std::forward<Args...[Indexes]>(args...[Indexes])...); };
+        { partial_call(callable, std::forward<Args...[Indexes]>(args...[Indexes])...); };
     }
 
     const emitter::signal<Args...>& m_signal;
@@ -572,7 +648,7 @@ public:
     {
     }
 
-    template<std::invocable<std::invoke_result_t<Transformations, Args>...> Callable,
+    template<partially_callable<std::invoke_result_t<Transformations, Args>...> Callable,
              execution_policy Policy = synchronous_policy>
     auto connect(Callable&& callable, Policy&& policy = {}) && -> connection
     {
@@ -580,7 +656,7 @@ public:
                                 std::forward<Policy>(policy));
     }
 
-    template<std::invocable<std::invoke_result_t<Transformations, Args>...> Callable,
+    template<partially_callable<std::invoke_result_t<Transformations, Args>...> Callable,
              execution_policy Policy = synchronous_policy>
     auto connect_once(Callable&& callable, Policy&& policy = {}) && -> connection
     {
@@ -589,7 +665,7 @@ public:
     }
 
 private:
-    template<std::invocable<std::invoke_result_t<Transformations, Args>...> Callable>
+    template<partially_callable<std::invoke_result_t<Transformations, Args>...> Callable>
     auto forwarding_lambda(Callable&& callable)
     {
         return [&callable, this]<std::size_t... Indexes>(const std::index_sequence<Indexes...>&)
@@ -597,7 +673,8 @@ private:
             return [callable = std::forward<Callable>(callable),
                     transformations = std::move(m_transformations)](Args&&... args) mutable
             {
-                callable(
+                partial_call(
+                    callable,
                     std::invoke(std::get<Indexes>(transformations), std::forward<Args>(args))...);
             };
         }(std::make_index_sequence<sizeof...(Transformations)> {});
@@ -625,16 +702,18 @@ public:
     {
     }
 
-    template<std::invocable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable,
-             execution_policy Policy = synchronous_policy>
+    template<
+        partially_callable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable,
+        execution_policy Policy = synchronous_policy>
     auto connect(Callable&& callable, Policy&& policy = {}) && -> connection
     {
         return m_signal.connect(forwarding_lambda(std::forward<Callable>(callable)),
                                 std::forward<Policy>(policy));
     }
 
-    template<std::invocable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable,
-             execution_policy Policy = synchronous_policy>
+    template<
+        partially_callable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable,
+        execution_policy Policy = synchronous_policy>
     auto connect_once(Callable&& callable, Policy&& policy = {}) && -> connection
     {
         return m_signal.connect_once(forwarding_lambda(std::forward<Callable>(callable)),
@@ -642,7 +721,8 @@ public:
     }
 
 private:
-    template<std::invocable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable>
+    template<
+        partially_callable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable>
     auto forwarding_lambda(Callable&& callable)
     {
         return
@@ -653,8 +733,9 @@ private:
             return [callable = std::move(callable),
                     transformations = std::move(transformations)](Args&&... args) mutable
             {
-                callable(std::invoke(std::get<TransformationIndexes>(transformations),
-                                     std::forward<Args...[Indexes]>(args...[Indexes]))...);
+                partial_call(callable,
+                             std::invoke(std::get<TransformationIndexes>(transformations),
+                                         std::forward<Args...[Indexes]>(args...[Indexes]))...);
             };
         }(std::make_index_sequence<sizeof...(Transformations)> {});
     }
@@ -674,12 +755,13 @@ class emitter::signal<Args...>::connection_holder_implementation final: public c
                                             T>;
 
 public:
-    template<std::convertible_to<signal::slot> Callable, execution_policy Policy>
+    template<partially_callable<Args...> Callable, execution_policy Policy>
     connection_holder_implementation(const signal& connected_signal,
                                      Callable&& callable,
                                      Policy&& policy,
                                      bool single_shot = false):
-        m_slot { std::forward<Callable>(callable) },
+        m_slot { [callable = std::forward<Callable>(callable)](Args&&... args) mutable
+    { partial_call(callable, std::forward<Args>(args)...); } },
         m_signal { connected_signal },
         m_policy(std::forward<Policy>(policy)),
         m_single_shot { single_shot }
@@ -791,8 +873,14 @@ template<class Receiver, signal_arg... ReceiverArgs>
 auto emitter::forwarding_lambda(this const Receiver& self,
                                 signal<ReceiverArgs...> Receiver::* receiver_signal)
 {
-    return [&emitted_signal = self.*receiver_signal]<signal_arg... Args>(Args&&... args)
-    { emitted_signal.emit(std::forward<Args>(args)...); };
+    return [&emitted_signal = self.*receiver_signal]<signal_arg... Args>(Args&&... args) mutable
+        requires partially_callable<std::function<void(ReceiverArgs...)>, Args...>
+    {
+        auto lambda { [&]<class... CallArgs>(CallArgs&&... call_args) mutable
+                          requires(sizeof...(CallArgs) == sizeof...(ReceiverArgs))
+        { emitted_signal.emit(std::forward<CallArgs>(call_args)...); } };
+        partial_call(lambda, std::forward<Args>(args)...);
+    };
 }
 
 template<signal_arg... Args>
@@ -843,7 +931,7 @@ auto emitter::signal<Args...>::partial_transformation(
 }
 
 template<signal_arg... Args>
-template<std::invocable<Args...> Callable, execution_policy Policy>
+template<partially_callable<Args...> Callable, execution_policy Policy>
 auto emitter::signal<Args...>::connect(Callable&& callable, Policy&& policy) const -> connection
 {
     m_slots.emplace_back(
@@ -855,7 +943,7 @@ auto emitter::signal<Args...>::connect(Callable&& callable, Policy&& policy) con
 }
 
 template<signal_arg... Args>
-template<std::invocable<Args...> Callable, execution_policy Policy>
+template<partially_callable<Args...> Callable, execution_policy Policy>
 auto emitter::signal<Args...>::connect_once(Callable&& callable, Policy&& policy) const
     -> connection
 {
