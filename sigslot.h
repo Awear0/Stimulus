@@ -13,6 +13,14 @@
 
 // ### Helpers
 
+template<class Instance, template<class...> class Template>
+concept instance_of = requires(const Instance& instance) {
+    []<class... Args>(const Template<Args...>&) {}(instance);
+};
+
+template<class Tuple>
+concept is_tuple = instance_of<Tuple, std::tuple>;
+
 template<class ExecutionPolicy>
 concept execution_policy = requires(ExecutionPolicy policy) {
     policy.execute(std::function<void()> {});
@@ -147,6 +155,12 @@ concept signal_arg = (not_void<SignalArgs> && !std::is_rvalue_reference_v<Signal
 template<std::size_t Index, class... Args>
 concept in_args_range = (Index < sizeof...(Args));
 
+template<std::size_t Index, class Tuple>
+concept in_tuple_range = requires {
+    is_tuple<Tuple>;
+    Index < std::tuple_size_v<Tuple>;
+};
+
 template<std::size_t... Values>
 struct all_different_implementation: std::true_type
 {
@@ -247,6 +261,32 @@ constexpr auto partial_call(Callable&& callable, Args&&... args)
                              std::forward<Args>(args)...);
 }
 
+template<class Callable, class Tuple>
+concept partially_tuple_callable = requires(Callable callable, Tuple tuple) {
+    is_tuple<Tuple>;
+    {
+        [callable, tuple]<std::size_t... Indexes>(const std::index_sequence<Indexes...>&)
+        {
+            partial_call(
+                callable,
+                std::forward<std::tuple_element_t<Indexes, Tuple>>(std::get<Indexes>(tuple))...);
+        }(std::make_index_sequence<std::tuple_size_v<Tuple>> {})
+    };
+};
+
+template<class Callable, class Tuple>
+    requires partially_tuple_callable<Callable, Tuple>
+constexpr auto partial_tuple_call(Callable&& callable, Tuple& tuple)
+{
+    constexpr std::make_index_sequence<std::tuple_size_v<Tuple>> index_sequence {};
+    return []<std::size_t... Indexes>(const std::index_sequence<Indexes...>&,
+                                      Callable&& callable,
+                                      Tuple& tuple)
+    {
+        return partial_call(std::forward<Callable>(callable), std::get<Indexes>(tuple)...);
+    }(index_sequence, std::forward<Callable>(callable), tuple);
+}
+
 // ### Forward declaration
 
 class connection;
@@ -284,6 +324,40 @@ template<class SignalTransformation>
 concept signal_transformation =
     (is_mapped_signal<SignalTransformation> || is_transformed_signal<SignalTransformation> ||
      is_mapped_transformed_signal<SignalTransformation>);
+
+class source;
+
+template<class Source>
+concept source_like =
+    requires(const Source& source, typename std::remove_cvref_t<Source>::args tuple) {
+        std::derived_from<std::remove_cvref_t<Source>, ::source>;
+        is_tuple<typename std::remove_cvref_t<Source>::args>;
+        {
+            []<class... Args>(const std::tuple<Args...>&)
+            { source.connect(std::function<void(Args...)> {}); }(tuple)
+        };
+        {
+            []<class... Args>(const std::tuple<Args...>&)
+            { source.connect_once(std::function<void(Args...)> {}); }(tuple)
+        };
+    };
+
+template<class Appliable, class Source>
+concept appliable = requires(const Source& source, Appliable appliable) {
+    source_like<Source>;
+    { appliable.accept(source) } -> source_like;
+};
+
+// ### Class source
+class source
+{
+public:
+    template<source_like Self, appliable<Self> Appliable>
+    auto apply(this const Self& self, Appliable&& appliable)
+    {
+        return appliable.accept(self);
+    }
+};
 
 // ### Class emitter declaration
 
@@ -464,6 +538,25 @@ private:
 
 // ### connectable
 
+// TODO AROSS:
+class connectable2
+{
+public:
+    template<class Self, class Callable, execution_policy Policy = synchronous_policy>
+    auto connect(this Self&& self, Callable&& callable, Policy&& policy = {}) -> connection
+    {
+        return self.m_source.connect(self.forwarding_lambda(std::forward<Callable>(callable)),
+                                     std::forward<Policy>(policy));
+    }
+
+    template<class Self, class Callable, execution_policy Policy = synchronous_policy>
+    auto connect_once(this Self&& self, Callable&& callable, Policy&& policy = {}) -> connection
+    {
+        return self.m_source.connect_once(self.forwarding_lambda(std::forward<Callable>(callable)),
+                                          std::forward<Policy>(policy));
+    }
+};
+
 class connectable
 {
 public:
@@ -486,9 +579,11 @@ public:
 
 // TODO AROSS: operator= strategy for signal
 template<signal_arg... Args>
-class emitter::signal final
+class emitter::signal final: public source
 {
 public:
+    using args = std::tuple<Args...>;
+
     friend emitter;
     using slot = std::function<void(Args...)>;
 
@@ -576,6 +671,167 @@ private:
 
     mutable std::vector<std::shared_ptr<connection_holder_implementation>> m_slots {};
     mutable std::vector<scoped_connection> m_emitting_sources {};
+};
+
+// ### map class
+// TODO AROSS: Change connectable name
+
+template<source_like Source, std::size_t... Indexes>
+    requires((in_tuple_range<Indexes, typename std::remove_cvref_t<Source>::args> && ...) &&
+             all_different<Indexes...>)
+class mapped_source: public source,
+                     public connectable2
+{
+public:
+    friend connectable2;
+
+    using args =
+        std::tuple<std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>&&...>;
+
+    mapped_source(Source&& origin):
+        m_source { std::forward<Source>(origin) }
+    {
+    }
+
+private:
+    template<partially_callable<
+        std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>...> Callable>
+    auto forwarding_lambda(Callable&& callable) const
+    {
+        return [callable = std::forward<Callable>(callable)]<class... Args>(Args&&... args) mutable
+        {
+            partial_call(
+                callable,
+                std::forward<
+                    std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>>(
+                    args...[Indexes])...);
+        };
+    }
+
+    Source m_source;
+};
+
+template<std::size_t... Indexes>
+    requires all_different<Indexes...>
+class map
+{
+public:
+    template<source_like Source>
+    auto accept(Source&& origin) -> mapped_source<Source, Indexes...>
+    {
+        return { std::forward<Source>(origin) };
+    }
+};
+
+// ### class transform
+
+template<class Source, class... Transformations>
+concept valid_transformations = requires(Transformations... transformations,
+                                         typename std::remove_cvref_t<Source>::args args) {
+    source_like<Source>;
+    {
+        [transformations, args]<std::size_t... Indexes>(const std::index_sequence<Indexes...>&)
+        {
+            (std::invoke(transformations...[Indexes], std::get<Indexes>(args)), ...);
+        }(std::make_index_sequence<sizeof...(Transformations)> {})
+    };
+    [transformations,
+     args]<std::size_t... Indexes>(const std::index_sequence<Indexes...>&) constexpr
+    {
+        return (not_void<std::invoke_result_t<
+                    Transformations...[Indexes],
+                    std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>>> &&
+                ...);
+    }(std::make_index_sequence<sizeof...(Transformations)> {});
+};
+
+template<class Tuple, class... Transformations>
+struct transformed_source_args;
+
+template<class Tuple, class... Transformations>
+using transformed_source_args_t = transformed_source_args<Tuple, Transformations...>::type;
+
+template<class... Args, class... Transformations>
+struct transformed_source_args<std::tuple<Args...>, Transformations...>
+{
+    using type = std::tuple<std::invoke_result_t<Transformations, Args>...>;
+};
+
+template<source_like Source, class... Transformations>
+    requires(valid_transformations<Source, Transformations...>)
+class transformed_source: public source,
+                          public connectable2
+{
+public:
+    friend connectable2;
+
+    using args =
+        transformed_source_args_t<typename std::remove_cvref_t<Source>::args, Transformations...>;
+
+    transformed_source(Source&& origin, std::tuple<Transformations...> transformations):
+        m_source { std::forward<Source>(origin) },
+        m_transformations { std::move(transformations) }
+    {
+    }
+
+private:
+    template<partially_tuple_callable<args> Callable>
+    auto forwarding_lambda(Callable&& callable) const
+    {
+        static constexpr std::make_index_sequence<sizeof...(Transformations)> index_sequence {};
+        return [callable = std::forward<Callable>(callable),
+                transformations = m_transformations]<class... Args>(Args&&... args) mutable
+        {
+            return [&callable, &transformations]<std::size_t... Indexes>(
+                       const std::index_sequence<Indexes...>&,
+                       Args&&... args) mutable
+            {
+                return partial_call(
+                    callable,
+                    std::get<Indexes>(transformations)(std::forward<Args>(args))...);
+            }(index_sequence, std::forward<Args>(args)...);
+        };
+    }
+
+    Source m_source;
+    std::tuple<Transformations...> m_transformations;
+};
+
+template<class Source, class... Transformations>
+transformed_source(Source&&, std::tuple<Transformations...>)
+    -> transformed_source<Source, Transformations...>;
+
+template<class... Transformations>
+class transform
+{
+private:
+    template<std::size_t>
+    using identity = std::identity;
+
+public:
+    transform(Transformations... transformations):
+        m_transformations { std::forward<Transformations>(transformations)... }
+    {
+    }
+
+    template<source_like Source>
+    auto accept(Source&& origin)
+    {
+        static constexpr std::make_index_sequence<
+            std::tuple_size_v<typename std::remove_cvref_t<Source>::args> -
+            sizeof...(Transformations)>
+            index_sequence {};
+
+        static constexpr auto identites { []<std::size_t... Indexes>(
+                                              const std::index_sequence<Indexes...>&) constexpr
+        { return std::make_tuple(identity<Indexes> {}...); }(index_sequence) };
+
+        return transformed_source { std::forward<Source>(origin),
+                                    std::tuple_cat(m_transformations, identites) };
+    }
+
+private:
+    std::tuple<Transformations...> m_transformations;
 };
 
 // ### mapped_signal definition

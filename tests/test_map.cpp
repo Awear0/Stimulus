@@ -21,7 +21,7 @@ TEST_F(test_map, no_effect_int)
     int& count = call_count<int>;
     reset<int>();
 
-    int_emitter.generic_signal.map<0>().connect(slot_function<int>);
+    int_emitter.generic_signal.apply(map<0> {}).connect(slot_function<int>);
     EXPECT_EQ(count, 0);
 
     int_emitter.generic_emit(5);
@@ -40,7 +40,7 @@ TEST_F(test_map, no_effect_string)
     int& count = call_count<std::string>;
     reset<std::string>();
 
-    string_emitter.generic_signal.map<0>().connect(slot_function<std::string>);
+    string_emitter.generic_signal.apply(map<0> {}).connect(slot_function<std::string>);
     EXPECT_EQ(count, 0);
 
     string_emitter.generic_emit("first");
@@ -59,7 +59,7 @@ TEST_F(test_map, copy_move_no_effect)
     int& count = call_count<copy_move_counter>;
     reset<copy_move_counter>();
 
-    copy_move_emitter.generic_signal.map<0>().connect(slot_function<copy_move_counter>);
+    copy_move_emitter.generic_signal.apply(map<0> {}).connect(slot_function<copy_move_counter>);
     EXPECT_EQ(count, 0);
 
     copy_move_emitter.generic_emit({});
@@ -75,8 +75,8 @@ TEST_F(test_map, 2_copy_move_no_effect)
     int& count = call_count<copy_move_counter>;
     reset<copy_move_counter>();
 
-    copy_move_emitter.generic_signal.map<0>().connect(slot_function<copy_move_counter>);
-    copy_move_emitter.generic_signal.map<0>().connect(slot_function<copy_move_counter>);
+    copy_move_emitter.generic_signal.apply(map<0> {}).connect(slot_function<copy_move_counter>);
+    copy_move_emitter.generic_signal.apply(map<0> {}).connect(slot_function<copy_move_counter>);
     EXPECT_EQ(count, 0);
 
     copy_move_emitter.generic_emit({});
@@ -96,7 +96,7 @@ TEST_F(test_map, swap_int_string)
     int& count = call_count<std::string, int>;
     reset<std::string, int>();
 
-    int_string_emitter.generic_signal.map<1, 0>().connect(slot_function<std::string, int>);
+    int_string_emitter.generic_signal.apply(map<1, 0> {}).connect(slot_function<std::string, int>);
     EXPECT_EQ(count, 0);
 
     int_string_emitter.generic_emit(5, "first");
@@ -119,7 +119,7 @@ TEST_F(test_map, int_string_to_only_int)
     int& count = call_count<int>;
     reset<int>();
 
-    int_string_emitter.generic_signal.map<0>().connect(slot_function<int>);
+    int_string_emitter.generic_signal.apply(map<0> {}).connect(slot_function<int>);
     EXPECT_EQ(count, 0);
 
     int_string_emitter.generic_emit(5, "first");
@@ -140,7 +140,7 @@ TEST_F(test_map, int_string_to_only_string)
     int& count = call_count<std::string>;
     reset<std::string>();
 
-    int_string_emitter.generic_signal.map<1>().connect(slot_function<std::string>);
+    int_string_emitter.generic_signal.apply(map<1> {}).connect(slot_function<std::string>);
     EXPECT_EQ(count, 0);
 
     int_string_emitter.generic_emit(5, "first");
@@ -161,7 +161,7 @@ TEST_F(test_map, int_string_to_nothing)
     int& count = call_count<>;
     reset<>();
 
-    int_string_emitter.generic_signal.map<>().connect(slot_function<>);
+    int_string_emitter.generic_signal.apply(map<> {}).connect(slot_function<>);
     EXPECT_EQ(count, 0);
 
     int_string_emitter.generic_emit(5, "first");
@@ -180,7 +180,7 @@ TEST_F(test_map, swap_int_string_lambda)
     int& count = call_count<std::string, int>;
     reset<std::string, int>();
 
-    int_string_emitter.generic_signal.map<1, 0>().connect(slot_lambda<std::string, int>());
+    int_string_emitter.generic_signal.apply(map<1, 0> {}).connect(slot_lambda<std::string, int>());
     EXPECT_EQ(count, 0);
 
     int_string_emitter.generic_emit(5, "first");
@@ -203,7 +203,8 @@ TEST_F(test_map, swap_int_string_mutable_lambda)
     int& count = call_count<std::string, int>;
     reset<std::string, int>();
 
-    int_string_emitter.generic_signal.map<1, 0>().connect(slot_mutable_lambda<std::string, int>());
+    int_string_emitter.generic_signal.apply(map<1, 0> {})
+        .connect(slot_mutable_lambda<std::string, int>());
     EXPECT_EQ(count, 0);
 
     int_string_emitter.generic_emit(5, "first");
@@ -226,7 +227,7 @@ TEST_F(test_map, swap_int_string_functor)
     int& count = call_count<std::string, int>;
     reset<std::string, int>();
 
-    int_string_emitter.generic_signal.map<1, 0>().connect(slot_functor<std::string, int>());
+    int_string_emitter.generic_signal.apply(map<1, 0> {}).connect(slot_functor<std::string, int>());
     EXPECT_EQ(count, 0);
 
     int_string_emitter.generic_emit(5, "first");
@@ -249,8 +250,8 @@ TEST_F(test_map, swap_int_string_non_const_functor)
     int& count = call_count<std::string, int>;
     reset<std::string, int>();
 
-    int_string_emitter.generic_signal.map<1, 0>().connect(
-        slot_non_const_functor<std::string, int>());
+    int_string_emitter.generic_signal.apply(map<1, 0> {})
+        .connect(slot_non_const_functor<std::string, int>());
     EXPECT_EQ(count, 0);
 
     int_string_emitter.generic_emit(5, "first");
