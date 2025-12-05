@@ -291,6 +291,8 @@ constexpr auto partial_tuple_call(Callable&& callable, Tuple&& tuple)
 
 class connection;
 class source;
+template<class Callable>
+class connect;
 
 template<class Source>
 concept source_like =
@@ -322,6 +324,19 @@ public:
     {
         return appliable.accept(self);
     }
+
+    template<source_like Self, appliable<Self> Appliable>
+    auto operator|(this const Self& self, Appliable&& appliable)
+    {
+        return self.apply(std::forward<Appliable>(appliable));
+    }
+
+    template<source_like Self,
+             partially_tuple_callable<typename std::remove_cvref_t<Self>::args> Callable>
+    auto operator|(this const Self& self, connect<Callable>&& connect)
+    {
+        return std::move(connect).create_connection(self);
+    }
 };
 
 // ### Class emitter declaration
@@ -336,28 +351,6 @@ public:
 protected:
     template<signal_arg... Args>
     class signal;
-
-    template<class Signal>
-    struct is_signal: public std::false_type
-    {
-    };
-
-    template<signal_arg... Args>
-    struct is_signal<signal<Args...>>: std::true_type
-    {
-    };
-
-    template<class Signal>
-    static constexpr bool is_signal_v { is_signal<Signal>::value };
-
-    template<class SequenceIndex, signal_arg... Args>
-    friend class mapped_signal;
-
-    template<class Signal, class... Transformations>
-    friend class transformed_signal;
-
-    template<class Signal, class IndexSequence, class... Transformations>
-    friend class mapped_transformed_signal;
 
     template<class Emitter, signal_arg... Args, std::convertible_to<Args>... EmittedArgs>
     void emit(this const Emitter& self,
@@ -944,5 +937,26 @@ auto emitter::signal<Args...>::connect_once(Callable&& callable, Policy&& policy
 
     return { m_slots.back() };
 }
+
+// ### connect class
+
+template<class Callable>
+class connect
+{
+public:
+    connect(Callable&& callable):
+        m_callable { std::forward<Callable>(callable) }
+    {
+    }
+
+    template<source_like Source>
+    auto create_connection(Source&& origin) && -> connection
+    {
+        return origin.connect(std::forward<Callable>(m_callable));
+    }
+
+private:
+    Callable&& m_callable;
+};
 
 #endif // SIGSLOT_H_

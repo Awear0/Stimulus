@@ -18,6 +18,7 @@ add_executable(tests
     test_partial_call.cpp
     test_partial_connection.cpp
     test_filter.cpp
+    test_pipe_operator.cpp
 )
 
 target_link_libraries(tests
