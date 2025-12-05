@@ -17,6 +17,7 @@ add_executable(tests
     test_execution_policy.cpp
     test_partial_call.cpp
     test_partial_connection.cpp
+    test_filter.cpp
 )
 
 target_link_libraries(tests

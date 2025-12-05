@@ -276,15 +276,15 @@ concept partially_tuple_callable = requires(Callable callable, Tuple tuple) {
 
 template<class Callable, class Tuple>
     requires partially_tuple_callable<Callable, Tuple>
-constexpr auto partial_tuple_call(Callable&& callable, Tuple& tuple)
+constexpr auto partial_tuple_call(Callable&& callable, Tuple&& tuple)
 {
     constexpr std::make_index_sequence<std::tuple_size_v<Tuple>> index_sequence {};
     return []<std::size_t... Indexes>(const std::index_sequence<Indexes...>&,
                                       Callable&& callable,
-                                      Tuple& tuple)
+                                      Tuple&& tuple)
     {
         return partial_call(std::forward<Callable>(callable), std::get<Indexes>(tuple)...);
-    }(index_sequence, std::forward<Callable>(callable), tuple);
+    }(index_sequence, std::forward<Callable>(callable), std::forward<Tuple>(tuple));
 }
 
 // ### Forward declaration
@@ -504,7 +504,7 @@ private:
 // ### connectable
 
 // TODO AROSS:
-class connectable2
+class connectable
 {
 public:
     template<class Self, class Callable, execution_policy Policy = synchronous_policy>
@@ -582,16 +582,15 @@ private:
 };
 
 // ### map class
-// TODO AROSS: Change connectable name
 
 template<source_like Source, std::size_t... Indexes>
     requires((in_tuple_range<Indexes, typename std::remove_cvref_t<Source>::args> && ...) &&
              all_different<Indexes...>)
 class mapped_source: public source,
-                     public connectable2
+                     public connectable
 {
 public:
-    friend connectable2;
+    friend connectable;
 
     using args =
         std::tuple<std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>&&...>;
@@ -668,10 +667,10 @@ struct transformed_source_args<std::tuple<Args...>, Transformations...>
 template<source_like Source, class... Transformations>
     requires(valid_transformations<Source, Transformations...>)
 class transformed_source: public source,
-                          public connectable2
+                          public connectable
 {
 public:
-    friend connectable2;
+    friend connectable;
 
     using args =
         transformed_source_args_t<typename std::remove_cvref_t<Source>::args, Transformations...>;
@@ -740,6 +739,65 @@ public:
 
 private:
     std::tuple<Transformations...> m_transformations;
+};
+
+// ### map filter
+
+template<source_like Source,
+         partially_tuple_callable<typename std::remove_cvref_t<Source>::args> Filter>
+    requires std::convertible_to<decltype(partial_tuple_call(
+                                     std::declval<Filter>(),
+                                     std::declval<typename std::remove_cvref_t<Source>::args>())),
+                                 bool>
+class filtered_source: public source,
+                       public connectable
+{
+public:
+    friend connectable;
+
+    using args = typename std::remove_cvref_t<Source>::args;
+
+    filtered_source(Source&& origin, Filter filter):
+        m_source { std::forward<Source>(origin) },
+        m_filter { std::move(filter) }
+    {
+    }
+
+private:
+    template<partially_tuple_callable<args> Callable>
+    auto forwarding_lambda(Callable&& callable) const
+    {
+        return [callable = std::forward<Callable>(callable),
+                filter = m_filter]<class... Args>(Args&&... args) mutable
+        {
+            if (static_cast<bool>(partial_call(filter, args...)))
+            {
+                partial_call(callable, std::forward<Args>(args)...);
+            }
+        };
+    }
+
+    Source m_source;
+    Filter m_filter;
+};
+
+template<class Filter>
+class filter
+{
+public:
+    filter(Filter filter):
+        m_filter { std::move(filter) }
+    {
+    }
+
+    template<source_like Source>
+    auto accept(Source&& origin) -> filtered_source<Source, Filter>
+    {
+        return { std::forward<Source>(origin), m_filter };
+    }
+
+private:
+    Filter m_filter;
 };
 
 // ### connection_holder_implementation class
