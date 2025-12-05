@@ -136,6 +136,7 @@ TEST_F(test_map_transform, int_string_to_int_int)
 {
     int& count = call_count<int, int>;
     reset<int, int>();
+    reset<std::string>();
 
     int_string_emitter.generic_signal.apply(map<1, 0>())
         .apply(transform(to_int))
@@ -161,6 +162,7 @@ TEST_F(test_map_transform, int_string_to_string_string)
 {
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
+    reset<int>();
 
     int_string_emitter.generic_signal.apply(map<1, 0>())
         .apply(transform(std::identity {}, to_string))
@@ -186,6 +188,7 @@ TEST_F(test_map_transform, int_string_to_string_string_lambda)
 {
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
+    reset<int>();
 
     int_string_emitter.generic_signal.apply(map<1, 0>())
         .apply(transform(std::identity {}, to_string))
@@ -211,6 +214,7 @@ TEST_F(test_map_transform, int_string_to_string_string_mutable_lambda)
 {
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
+    reset<int>();
 
     int_string_emitter.generic_signal.apply(map<1, 0>())
         .apply(transform(std::identity {}, to_string))
@@ -236,6 +240,7 @@ TEST_F(test_map_transform, int_string_to_string_string_functor)
 {
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
+    reset<int>();
 
     int_string_emitter.generic_signal.apply(map<1, 0>())
         .apply(transform(std::identity {}, to_string))
@@ -261,6 +266,7 @@ TEST_F(test_map_transform, int_string_to_string_string_non_const_functor)
 {
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
+    reset<int>();
 
     int_string_emitter.generic_signal.apply(map<1, 0>())
         .apply(transform(std::identity {}, to_string))

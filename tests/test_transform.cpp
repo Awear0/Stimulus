@@ -127,6 +127,7 @@ TEST_F(test_transform, int_string_to_int_int)
 {
     int& count = call_count<int, int>;
     reset<int, int>();
+    reset<std::string>();
 
     int_string_emitter.generic_signal.apply(transform { std::identity {}, to_int })
         .connect(slot_function<int, int>);
@@ -151,6 +152,7 @@ TEST_F(test_transform, int_string_to_string_string)
 {
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
+    reset<int>();
 
     int_string_emitter.generic_signal.apply(transform { to_string })
         .connect(slot_function<std::string, std::string>);
@@ -198,6 +200,7 @@ TEST_F(test_transform, int_string_to_string_string_lambda)
 {
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
+    reset<int>();
 
     int_string_emitter.generic_signal.apply(transform { to_string })
         .connect(slot_lambda<std::string, std::string>());
@@ -222,6 +225,7 @@ TEST_F(test_transform, int_string_to_string_string_mutable_lambda)
 {
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
+    reset<int>();
 
     int_string_emitter.generic_signal.apply(transform { to_string })
         .connect(slot_mutable_lambda<std::string, std::string>());
@@ -246,6 +250,7 @@ TEST_F(test_transform, int_string_to_string_string_functor)
 {
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
+    reset<int>();
 
     int_string_emitter.generic_signal.apply(transform { to_string })
         .connect(slot_functor<std::string, std::string>());
@@ -270,6 +275,7 @@ TEST_F(test_transform, int_string_to_string_string_non_const_functor)
 {
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
+    reset<int>();
 
     int_string_emitter.generic_signal.apply(transform { to_string })
         .connect(slot_non_const_functor<std::string, std::string>());

@@ -118,6 +118,7 @@ TEST_F(test_map, int_string_to_only_int)
 {
     int& count = call_count<int>;
     reset<int>();
+    reset<std::string>();
 
     int_string_emitter.generic_signal.apply(map<0> {}).connect(slot_function<int>);
     EXPECT_EQ(count, 0);
@@ -138,6 +139,7 @@ TEST_F(test_map, int_string_to_only_int)
 TEST_F(test_map, int_string_to_only_string)
 {
     int& count = call_count<std::string>;
+    reset<int>();
     reset<std::string>();
 
     int_string_emitter.generic_signal.apply(map<1> {}).connect(slot_function<std::string>);
@@ -160,6 +162,8 @@ TEST_F(test_map, int_string_to_nothing)
 {
     int& count = call_count<>;
     reset<>();
+    reset<int>();
+    reset<std::string>();
 
     int_string_emitter.generic_signal.apply(map<> {}).connect(slot_function<>);
     EXPECT_EQ(count, 0);

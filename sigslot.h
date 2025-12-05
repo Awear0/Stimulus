@@ -320,22 +320,22 @@ class source
 {
 public:
     template<source_like Self, appliable<Self> Appliable>
-    auto apply(this const Self& self, Appliable&& appliable)
+    auto apply(this Self&& self, Appliable&& appliable)
     {
-        return appliable.accept(self);
+        return appliable.accept(std::forward<Self>(self));
     }
 
     template<source_like Self, appliable<Self> Appliable>
-    auto operator|(this const Self& self, Appliable&& appliable)
+    auto operator|(this Self&& self, Appliable&& appliable)
     {
-        return self.apply(std::forward<Appliable>(appliable));
+        return std::forward<Self>(self).apply(std::forward<Appliable>(appliable));
     }
 
     template<source_like Self,
              partially_tuple_callable<typename std::remove_cvref_t<Self>::args> Callable>
-    auto operator|(this const Self& self, connect<Callable>&& connect)
+    auto operator|(this Self&& self, const connect<Callable>& connect)
     {
-        return std::move(connect).create_connection(self);
+        return connect.create_connection(std::forward<Self>(self));
     }
 };
 
@@ -574,7 +574,75 @@ private:
     mutable std::vector<scoped_connection> m_emitting_sources {};
 };
 
-// ### map class
+// ### class chainable
+
+class chainable;
+
+template<std::derived_from<chainable> Chainable, class Callable>
+class chain
+{
+public:
+    chain(Chainable&& chainable, const connect<Callable>& connect):
+        m_chainable { std::forward<Chainable>(chainable) },
+        m_connect { std::move(connect) }
+    {
+    }
+
+    template<source_like Source>
+    friend auto operator|(Source&& source, chain& chain)
+    {
+        return source | chain.m_chainable | chain.m_connect;
+    }
+
+private:
+    std::remove_cvref_t<Chainable> m_chainable;
+    connect<Callable> m_connect;
+};
+
+template<std::derived_from<chainable> Lhs, std::derived_from<chainable> Rhs>
+class composed_chainable;
+
+class chainable
+{
+public:
+    template<class Self, std::derived_from<chainable> OtherChainable>
+    auto operator|(this Self&& self, OtherChainable&& other);
+
+    template<class Self, class Callable>
+    auto operator|(this Self&& self, const connect<Callable>& connect) -> chain<Self, Callable>
+    {
+        return { std::forward<Self>(self), connect };
+    }
+};
+
+template<std::derived_from<chainable> Lhs, std::derived_from<chainable> Rhs>
+class composed_chainable: public chainable
+{
+public:
+    composed_chainable(Lhs&& lhs, Rhs&& rhs):
+        m_lhs { std::forward<Lhs>(lhs) },
+        m_rhs { std::forward<Rhs>(rhs) }
+    {
+    }
+
+    template<source_like Source>
+    friend auto operator|(Source&& source, composed_chainable& composed_chainable)
+    {
+        return (source | composed_chainable.m_lhs) | composed_chainable.m_rhs;
+    };
+
+private:
+    Lhs m_lhs;
+    Rhs m_rhs;
+};
+
+template<class Self, std::derived_from<chainable> OtherChainable>
+auto chainable::operator|(this Self&& self, OtherChainable&& other)
+{
+    return composed_chainable { std::forward<Self>(self), std::forward<OtherChainable>(other) };
+}
+
+// ### class map
 
 template<source_like Source, std::size_t... Indexes>
     requires((in_tuple_range<Indexes, typename std::remove_cvref_t<Source>::args> && ...) &&
@@ -613,7 +681,7 @@ private:
 
 template<std::size_t... Indexes>
     requires all_different<Indexes...>
-class map
+class map: public chainable
 {
 public:
     template<source_like Source>
@@ -702,7 +770,7 @@ transformed_source(Source&&, std::tuple<Transformations...>)
     -> transformed_source<Source, Transformations...>;
 
 template<class... Transformations>
-class transform
+class transform: public chainable
 {
 private:
     template<std::size_t>
@@ -775,7 +843,7 @@ private:
 };
 
 template<class Filter>
-class filter
+class filter: public chainable
 {
 public:
     filter(Filter filter):
@@ -950,13 +1018,13 @@ public:
     }
 
     template<source_like Source>
-    auto create_connection(Source&& origin) && -> connection
+    auto create_connection(Source&& origin) const -> connection
     {
-        return origin.connect(std::forward<Callable>(m_callable));
+        return origin.connect(m_callable);
     }
 
 private:
-    Callable&& m_callable;
+    std::decay_t<Callable> m_callable;
 };
 
 #endif // SIGSLOT_H_
