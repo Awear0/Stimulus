@@ -33,7 +33,7 @@ protected:
         template<signal_arg... EmittingArgs>
         forwarding_mapped_emitter(const signal<EmittingArgs...>& emitting_signal)
         {
-            connect(emitting_signal.template map<1, 0>(), &forwarding_mapped_emitter::m_signal);
+            connect(emitting_signal.apply(map<1, 0>()), &forwarding_mapped_emitter::m_signal);
         }
 
         signal<Args...> m_signal;

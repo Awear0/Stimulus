@@ -290,41 +290,6 @@ constexpr auto partial_tuple_call(Callable&& callable, Tuple& tuple)
 // ### Forward declaration
 
 class connection;
-
-template<class SequenceIndex, signal_arg... Args>
-class mapped_signal;
-
-template<class MappedSignal>
-concept is_mapped_signal = requires(const MappedSignal& mapped_sig) {
-    []<std::size_t... Indexes, signal_arg... Args>(
-        const mapped_signal<std::index_sequence<Indexes...>, Args...>&) {}(mapped_sig);
-};
-
-template<class Signal, class... Transformations>
-class transformed_signal;
-
-template<class TransformedSignal>
-concept is_transformed_signal = requires(const TransformedSignal& transformed_signal) {
-    []<class Signal, signal_arg... Args>(const ::transformed_signal<Signal, Args...>&) {}(
-        transformed_signal);
-};
-
-template<class Signal, class IndexSequence, class... Transformations>
-class mapped_transformed_signal;
-
-template<class MappedTransformedSignal>
-concept is_mapped_transformed_signal = requires(
-    const MappedTransformedSignal& mapped_transformed_signal) {
-    []<class Signal, std::size_t... Indexes, signal_arg... Args>(
-        const ::mapped_transformed_signal<Signal, std::index_sequence<Indexes...>, Args...>&) {}(
-        mapped_transformed_signal);
-};
-
-template<class SignalTransformation>
-concept signal_transformation =
-    (is_mapped_signal<SignalTransformation> || is_transformed_signal<SignalTransformation> ||
-     is_mapped_transformed_signal<SignalTransformation>);
-
 class source;
 
 template<class Source>
@@ -406,10 +371,10 @@ protected:
     // TODO AROSS: Handle automatic removal when receiver is destroyed
     template<class Receiver,
              signal_arg... ReceiverArgs,
-             class Emitter,
+             source_like Emitter,
              execution_policy Policy = synchronous_policy>
-        requires(signal_transformation<std::remove_cvref_t<Emitter>> ||
-                 is_signal_v<std::remove_cvref_t<Emitter>>)
+        requires(partially_tuple_callable<std::function<void(ReceiverArgs...)>,
+                                          typename std::remove_cvref_t<Emitter>::args>)
     auto connect(this const Receiver& self,
                  Emitter&& emitter,
                  signal<ReceiverArgs...> Receiver::* receiver_signal,
@@ -417,10 +382,10 @@ protected:
 
     template<class Receiver,
              signal_arg... ReceiverArgs,
-             class Emitter,
+             source_like Emitter,
              execution_policy Policy = synchronous_policy>
-        requires(signal_transformation<std::remove_cvref_t<Emitter>> ||
-                 is_signal_v<std::remove_cvref_t<Emitter>>)
+        requires(partially_tuple_callable<std::function<void(ReceiverArgs...)>,
+                                          typename std::remove_cvref_t<Emitter>::args>)
     auto connect_once(this const Receiver& self,
                       Emitter&& emitter,
                       signal<ReceiverArgs...> Receiver::* receiver_signal,
@@ -557,24 +522,6 @@ public:
     }
 };
 
-class connectable
-{
-public:
-    template<class Self, class Callable, execution_policy Policy = synchronous_policy>
-    auto connect(this Self&& self, Callable&& callable, Policy&& policy = {}) -> connection
-    {
-        return self.m_signal.connect(self.forwarding_lambda(std::forward<Callable>(callable)),
-                                     std::forward<Policy>(policy));
-    }
-
-    template<class Self, class Callable, execution_policy Policy = synchronous_policy>
-    auto connect_once(this Self&& self, Callable&& callable, Policy&& policy = {}) -> connection
-    {
-        return self.m_signal.connect_once(self.forwarding_lambda(std::forward<Callable>(callable)),
-                                          std::forward<Policy>(policy));
-    }
-};
-
 // ### Signal definition
 
 // TODO AROSS: operator= strategy for signal
@@ -592,40 +539,6 @@ public:
 
     template<partially_callable<Args...> Callable, execution_policy Policy = synchronous_policy>
     auto connect_once(Callable&& callable, Policy&& policy = {}) const -> connection;
-
-    template<std::size_t... Indexes>
-        requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
-    auto map() const -> mapped_signal<std::index_sequence<Indexes...>, Args...>;
-
-private:
-    template<std::size_t Value>
-    using identity_t = const std::identity&;
-
-    template<class IndexSequence, class... Transformations>
-    struct fill_transformed_signal;
-
-    template<std::size_t... Indexes, class... Transformations>
-    struct fill_transformed_signal<std::index_sequence<Indexes...>, Transformations...>
-    {
-        using type = transformed_signal<signal, Transformations..., identity_t<Indexes>...>;
-    };
-
-    template<class... Transformations>
-    using fill_transformed_signal_t = fill_transformed_signal<
-        std::make_index_sequence<sizeof...(Args) - sizeof...(Transformations)>,
-        Transformations...>::type;
-
-public:
-    template<std::invocable<Args>... Transformations>
-        requires((sizeof...(Transformations) == sizeof...(Args)) &&
-                 (not_void<std::invoke_result_t<Transformations, Args>> && ...))
-    auto transform(Transformations&&... transformations) const
-        -> transformed_signal<signal, Transformations...>;
-
-    template<class... Transformations>
-        requires(sizeof...(Transformations) < sizeof...(Args))
-    auto transform(Transformations&&... transformations) const
-        -> fill_transformed_signal_t<Transformations...>;
 
 private:
     template<std::convertible_to<Args>... EmittedArgs>
@@ -663,11 +576,6 @@ private:
     {
         m_emitting_sources.emplace_back(std::move(source));
     }
-
-    template<std::size_t... IdentityIndexes, class... Transformations>
-    auto partial_transformation(const std::index_sequence<IdentityIndexes...>&,
-                                Transformations&&... transformations) const
-        -> fill_transformed_signal_t<Transformations...>;
 
     mutable std::vector<std::shared_ptr<connection_holder_implementation>> m_slots {};
     mutable std::vector<scoped_connection> m_emitting_sources {};
@@ -834,147 +742,6 @@ private:
     std::tuple<Transformations...> m_transformations;
 };
 
-// ### mapped_signal definition
-
-template<std::size_t... Indexes, class... Args>
-    requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
-class mapped_signal<std::index_sequence<Indexes...>, Args...>: public connectable
-{
-public:
-    friend connectable;
-
-    mapped_signal(const emitter::signal<Args...>& emitted_signal):
-        m_signal { emitted_signal }
-    {
-    }
-
-    template<std::invocable<Args...[Indexes]>... Transformations>
-        requires((sizeof...(Transformations) == sizeof...(Args)) &&
-                 (not_void<std::invoke_result_t<Transformations, Args...[Indexes]>> && ...))
-    auto transform(Transformations&&... transformations)
-        const&& -> mapped_transformed_signal<emitter::signal<Args...>,
-                                             std::index_sequence<Indexes...>,
-                                             Transformations...>
-    {
-        return { m_signal, std::forward<Transformations>(transformations)... };
-    }
-
-    template<class... Transformations>
-        requires(sizeof...(Transformations) < sizeof...(Args))
-    auto transform(Transformations&&... transformations) const&&
-    {
-        return std::move(*this).partial_transformation(
-            std::make_index_sequence<sizeof...(Args) - sizeof...(Transformations)> {},
-            std::forward<Transformations>(transformations)...);
-    }
-
-private:
-    template<std::size_t... IdentityIndexes, class... Transformations>
-    auto partial_transformation(const std::index_sequence<IdentityIndexes...>&,
-                                Transformations&&... transformations) const
-    {
-        static constexpr std::identity identity {};
-
-        static constexpr auto create_identity {
-            [](std::size_t Index) constexpr -> const std::identity& { return identity; }
-        };
-
-        return std::move(*this).transform(std::forward<Transformations>(transformations)...,
-                                          create_identity(IdentityIndexes)...);
-    }
-
-    template<partially_callable<Args...[Indexes]...> Callable>
-    auto forwarding_lambda(Callable&& callable) const
-    {
-        return [callable = std::forward<Callable>(callable)](Args&&... args) mutable
-        { partial_call(callable, std::forward<Args...[Indexes]>(args...[Indexes])...); };
-    }
-
-    const emitter::signal<Args...>& m_signal;
-};
-
-// ### transformed_signal class
-
-template<signal_arg... Args, class... Transformations>
-    requires((std::invocable<Transformations, Args> && ...) &&
-             (not_void<std::invoke_result_t<Transformations, Args>> && ...))
-class transformed_signal<emitter::signal<Args...>, Transformations...>: public connectable
-{
-public:
-    friend emitter;
-    friend connectable;
-
-    transformed_signal(const emitter::signal<Args...>& emitted_signal,
-                       Transformations&&... transformations):
-        m_signal { emitted_signal },
-        m_transformations { std::forward<Transformations>(transformations)... }
-    {
-    }
-
-private:
-    template<partially_callable<std::invoke_result_t<Transformations, Args>...> Callable>
-    auto forwarding_lambda(Callable&& callable)
-    {
-        return [&callable, this]<std::size_t... Indexes>(const std::index_sequence<Indexes...>&)
-        {
-            return [callable = std::forward<Callable>(callable),
-                    transformations = std::move(m_transformations)](Args&&... args) mutable
-            {
-                partial_call(
-                    callable,
-                    std::invoke(std::get<Indexes>(transformations), std::forward<Args>(args))...);
-            };
-        }(std::make_index_sequence<sizeof...(Transformations)> {});
-    }
-
-    const emitter::signal<Args...>& m_signal;
-    std::tuple<Transformations...> m_transformations;
-};
-
-// ### mapped_transformed_signal class
-
-template<signal_arg... Args, std::size_t... Indexes, class... Transformations>
-    requires(((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>) &&
-             ((std::invocable<Transformations, Args...[Indexes]> && ...) &&
-              (not_void<std::invoke_result_t<Transformations, Args...[Indexes]>> && ...)))
-class mapped_transformed_signal<emitter::signal<Args...>,
-                                std::index_sequence<Indexes...>,
-                                Transformations...>: public connectable
-{
-public:
-    friend connectable;
-
-    mapped_transformed_signal(const emitter::signal<Args...>& emitted_signal,
-                              Transformations... transformations):
-        m_signal { emitted_signal },
-        m_transformations { std::forward<Transformations>(transformations)... }
-    {
-    }
-
-private:
-    template<
-        partially_callable<std::invoke_result_t<Transformations, Args...[Indexes]>...> Callable>
-    auto forwarding_lambda(Callable&& callable)
-    {
-        return
-            [callable = std::forward<Callable>(callable),
-             transformations = std::move(m_transformations)]<std::size_t... TransformationIndexes>(
-                const std::index_sequence<TransformationIndexes...>&) mutable
-        {
-            return [callable = std::move(callable),
-                    transformations = std::move(transformations)](Args&&... args) mutable
-            {
-                partial_call(callable,
-                             std::invoke(std::get<TransformationIndexes>(transformations),
-                                         std::forward<Args...[Indexes]>(args...[Indexes]))...);
-            };
-        }(std::make_index_sequence<sizeof...(Transformations)> {});
-    }
-
-    const emitter::signal<Args...>& m_signal;
-    std::tuple<Transformations...> m_transformations;
-};
-
 // ### connection_holder_implementation class
 
 template<signal_arg... Args>
@@ -1050,54 +817,32 @@ private:
 
 // ### emitter implementation
 
-template<class Receiver, signal_arg... ReceiverArgs, class Emitter, execution_policy Policy>
-    requires(signal_transformation<std::remove_cvref_t<Emitter>> ||
-             emitter::is_signal_v<std::remove_cvref_t<Emitter>>)
+template<class Receiver, signal_arg... ReceiverArgs, source_like Emitter, execution_policy Policy>
+    requires(partially_tuple_callable<std::function<void(ReceiverArgs...)>,
+                                      typename std::remove_cvref_t<Emitter>::args>)
 auto emitter::connect(this const Receiver& self,
                       Emitter&& emitter,
                       signal<ReceiverArgs...> Receiver::* receiver_signal,
                       Policy&& policy) -> connection
 {
-    if constexpr (signal_transformation<std::remove_cvref_t<Emitter>>)
-    {
-        auto connection { std::forward<Emitter>(emitter).connect(
-            self.forwarding_lambda(receiver_signal),
-            std::forward<Policy>(policy)) };
-        (self.*receiver_signal).add_emitting_source(connection);
-        return connection;
-    }
-    else
-    {
-        auto connection { emitter.connect(self.forwarding_lambda(receiver_signal),
-                                          std::forward<Policy>(policy)) };
-        (self.*receiver_signal).add_emitting_source(connection);
-        return connection;
-    }
+    auto connection { emitter.connect(self.forwarding_lambda(receiver_signal),
+                                      std::forward<Policy>(policy)) };
+    (self.*receiver_signal).add_emitting_source(connection);
+    return connection;
 }
 
-template<class Receiver, signal_arg... ReceiverArgs, class Emitter, execution_policy Policy>
-    requires(signal_transformation<std::remove_cvref_t<Emitter>> ||
-             emitter::is_signal_v<std::remove_cvref_t<Emitter>>)
+template<class Receiver, signal_arg... ReceiverArgs, source_like Emitter, execution_policy Policy>
+    requires(partially_tuple_callable<std::function<void(ReceiverArgs...)>,
+                                      typename std::remove_cvref_t<Emitter>::args>)
 auto emitter::connect_once(this const Receiver& self,
                            Emitter&& emitter,
                            signal<ReceiverArgs...> Receiver::* receiver_signal,
                            Policy&& policy) -> connection
 {
-    if constexpr (signal_transformation<std::remove_cvref_t<Emitter>>)
-    {
-        auto connection { std::forward<Emitter>(emitter).connect_once(
-            self.forwarding_lambda(receiver_signal),
-            std::forward<Policy>(policy)) };
-        (self.*receiver_signal).add_emitting_source(connection);
-        return connection;
-    }
-    else
-    {
-        auto connection { emitter.connect_once(self.forwarding_lambda(receiver_signal),
-                                               std::forward<Policy>(policy)) };
-        (self.*receiver_signal).add_emitting_source(connection);
-        return connection;
-    }
+    auto connection { emitter.connect_once(self.forwarding_lambda(receiver_signal),
+                                           std::forward<Policy>(policy)) };
+    (self.*receiver_signal).add_emitting_source(connection);
+    return connection;
 }
 
 template<class Receiver, signal_arg... ReceiverArgs>
@@ -1114,52 +859,7 @@ auto emitter::forwarding_lambda(this const Receiver& self,
     };
 }
 
-template<signal_arg... Args>
-template<std::size_t... Indexes>
-    requires((in_args_range<Indexes, Args...> && ...) && all_different<Indexes...>)
-auto emitter::signal<Args...>::map() const
-    -> mapped_signal<std::index_sequence<Indexes...>, Args...>
-{
-    return { *this };
-}
-
 // ### signal implementation
-
-template<signal_arg... Args>
-template<std::invocable<Args>... Transformations>
-    requires((sizeof...(Transformations) == sizeof...(Args)) &&
-             (not_void<std::invoke_result_t<Transformations, Args>> && ...))
-auto emitter::signal<Args...>::transform(Transformations&&... transformations) const
-    -> transformed_signal<signal<Args...>, Transformations...>
-{
-    return { *this, std::forward<Transformations>(transformations)... };
-}
-
-template<signal_arg... Args>
-template<class... Transformations>
-    requires(sizeof...(Transformations) < sizeof...(Args))
-auto emitter::signal<Args...>::transform(Transformations&&... transformations) const
-    -> fill_transformed_signal_t<Transformations...>
-{
-    return std::move(*this).partial_transformation(
-        std::make_index_sequence<sizeof...(Args) - sizeof...(Transformations)> {},
-        std::forward<Transformations>(transformations)...);
-}
-
-template<signal_arg... Args>
-template<std::size_t... IdentityIndexes, class... Transformations>
-auto emitter::signal<Args...>::partial_transformation(
-    const std::index_sequence<IdentityIndexes...>&,
-    Transformations&&... transformations) const -> fill_transformed_signal_t<Transformations...>
-{
-    static constexpr std::identity identity {};
-
-    static constexpr auto create_identity { [](std::size_t Index) constexpr -> const std::identity&
-    { return identity; } };
-
-    return std::move(*this).transform(std::forward<Transformations>(transformations)...,
-                                      create_identity(IdentityIndexes)...);
-}
 
 template<signal_arg... Args>
 template<partially_callable<Args...> Callable, execution_policy Policy>

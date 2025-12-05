@@ -38,7 +38,7 @@ protected:
         template<class... Args>
         map_to_nothing_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
-            connect(emitting_signal.template map<>(), &map_to_nothing_forwarding_emitter::m_signal);
+            connect(emitting_signal.apply(map<> {}), &map_to_nothing_forwarding_emitter::m_signal);
         }
 
         signal<> m_signal;
@@ -49,7 +49,7 @@ protected:
     {
         map_to_first_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
-            connect(emitting_signal.template map<0>(), &map_to_first_forwarding_emitter::m_signal);
+            connect(emitting_signal.apply(map<0> {}), &map_to_first_forwarding_emitter::m_signal);
         }
 
         signal<Args...[0]> m_signal;
@@ -60,7 +60,7 @@ protected:
     {
         map_to_second_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
-            connect(emitting_signal.template map<1>(), &map_to_second_forwarding_emitter::m_signal);
+            connect(emitting_signal.apply(map<1> {}), &map_to_second_forwarding_emitter::m_signal);
         }
 
         signal<Args...[1]> m_signal;
@@ -71,7 +71,7 @@ protected:
     {
         map_swap_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
-            connect(emitting_signal.template map<1, 0>(), &map_swap_forwarding_emitter::m_signal);
+            connect(emitting_signal.apply(map<1, 0> {}), &map_swap_forwarding_emitter::m_signal);
         }
 
         signal<Args...[1], Args...[0]> m_signal;
@@ -82,7 +82,8 @@ protected:
     {
         no_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
-            connect(emitting_signal.transform(), &no_transformation_forwarding_emitter::m_signal);
+            connect(emitting_signal.apply(transform {}),
+                    &no_transformation_forwarding_emitter::m_signal);
         }
 
         signal<Args...> m_signal;
@@ -93,7 +94,7 @@ protected:
     {
         to_string_to_int_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
-            connect(emitting_signal.transform(to_string, to_int),
+            connect(emitting_signal.apply(transform(to_string, to_int)),
                     &to_string_to_int_transformation_forwarding_emitter::m_signal);
         }
 
@@ -105,7 +106,7 @@ protected:
     {
         to_string_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
-            connect(emitting_signal.transform(to_string),
+            connect(emitting_signal.apply(transform(to_string)),
                     &to_string_transformation_forwarding_emitter::m_signal);
         }
 
@@ -117,8 +118,20 @@ protected:
     {
         to_int_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
-            connect(emitting_signal.transform(std::identity {}, to_int),
+            connect(emitting_signal.apply(transform(std::identity {}, to_int)),
                     &to_int_transformation_forwarding_emitter::m_signal);
+        }
+
+        signal<int, int> m_signal;
+    };
+
+    template<class... Args>
+    struct to_int_transformation_forwarding_emitter2: public emitter
+    {
+        to_int_transformation_forwarding_emitter2(const signal<Args...>& emitting_signal)
+        {
+            connect(emitting_signal.apply(map<1, 0>()).apply(transform(to_int)).apply(map<1, 0>()),
+                    &to_int_transformation_forwarding_emitter2::m_signal);
         }
 
         signal<int, int> m_signal;
@@ -129,7 +142,7 @@ protected:
     {
         double_swap_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
-            connect(emitting_signal.template map<1, 0>().transform(to_int, to_string),
+            connect(emitting_signal.apply(map<1, 0>()).apply(transform(to_int, to_string)),
                     &double_swap_forwarding_emitter::m_signal);
         }
 
@@ -490,6 +503,29 @@ TEST_F(test_forward_signal, to_int_transform_int_string_signal)
     reset<int, int>();
 
     to_int_transformation_forwarding_emitter receiver(int_string_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<int, int>);
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(44, "55");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 2);
+    EXPECT_EQ(call_args<int>.back(), 55);
+    EXPECT_EQ(*call_args<int>.begin(), 44);
+
+    int_string_emitter.generic_emit(47, "57");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 4);
+    EXPECT_EQ(call_args<int>.back(), 57);
+    EXPECT_EQ(*std::next(call_args<int>.begin(), 2), 47);
+}
+
+TEST_F(test_forward_signal, to_int_transform_int_string_signal2)
+{
+    int& count = call_count<int, int>;
+    reset<int, int>();
+
+    to_int_transformation_forwarding_emitter2 receiver(int_string_emitter.generic_signal);
 
     receiver.m_signal.connect(slot_function<int, int>);
     EXPECT_EQ(count, 0);

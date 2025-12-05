@@ -23,7 +23,7 @@ TEST_F(test_map_transform, no_effect_int)
     int& count = call_count<int>;
     reset<int>();
 
-    int_emitter.generic_signal.map<0>().transform().connect(slot_function<int>);
+    int_emitter.generic_signal.apply(map<0>()).apply(transform()).connect(slot_function<int>);
     EXPECT_EQ(count, 0);
 
     int_emitter.generic_emit(5);
@@ -42,7 +42,9 @@ TEST_F(test_map_transform, no_effect_string)
     int& count = call_count<std::string>;
     reset<std::string>();
 
-    string_emitter.generic_signal.map<0>().transform().connect(slot_function<std::string>);
+    string_emitter.generic_signal.apply(map<0>())
+        .apply(transform())
+        .connect(slot_function<std::string>);
     EXPECT_EQ(count, 0);
 
     string_emitter.generic_emit("first");
@@ -61,7 +63,9 @@ TEST_F(test_map_transform, copy_move_no_effect)
     int& count = call_count<copy_move_counter>;
     reset<copy_move_counter>();
 
-    copy_move_emitter.generic_signal.map<0>().transform().connect(slot_function<copy_move_counter>);
+    copy_move_emitter.generic_signal.apply(map<0>())
+        .apply(transform())
+        .connect(slot_function<copy_move_counter>);
     EXPECT_EQ(count, 0);
 
     copy_move_emitter.generic_emit({});
@@ -77,8 +81,12 @@ TEST_F(test_map_transform, 2_copy_move_no_effect)
     int& count = call_count<copy_move_counter>;
     reset<copy_move_counter>();
 
-    copy_move_emitter.generic_signal.map<0>().transform().connect(slot_function<copy_move_counter>);
-    copy_move_emitter.generic_signal.map<0>().transform().connect(slot_function<copy_move_counter>);
+    copy_move_emitter.generic_signal.apply(map<0>())
+        .apply(transform())
+        .connect(slot_function<copy_move_counter>);
+    copy_move_emitter.generic_signal.apply(map<0>())
+        .apply(transform())
+        .connect(slot_function<copy_move_counter>);
     EXPECT_EQ(count, 0);
 
     copy_move_emitter.generic_emit({});
@@ -104,8 +112,8 @@ TEST_F(test_map_transform, swap_int_string)
     int& count = call_count<int, std::string>;
     reset<int, std::string>();
 
-    int_string_emitter.generic_signal.map<1, 0>()
-        .transform(to_int, to_string)
+    int_string_emitter.generic_signal.apply(map<1, 0>())
+        .apply(transform(to_int, to_string))
         .connect(slot_function<int, std::string>);
     EXPECT_EQ(count, 0);
 
@@ -129,8 +137,9 @@ TEST_F(test_map_transform, int_string_to_int_int)
     int& count = call_count<int, int>;
     reset<int, int>();
 
-    int_string_emitter.generic_signal.map<1, 0>().transform(to_int).connect(
-        slot_function<int, int>);
+    int_string_emitter.generic_signal.apply(map<1, 0>())
+        .apply(transform(to_int))
+        .connect(slot_function<int, int>);
     EXPECT_EQ(count, 0);
 
     int_string_emitter.generic_emit(5, "55");
@@ -153,8 +162,8 @@ TEST_F(test_map_transform, int_string_to_string_string)
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
 
-    int_string_emitter.generic_signal.map<1, 0>()
-        .transform(std::identity {}, to_string)
+    int_string_emitter.generic_signal.apply(map<1, 0>())
+        .apply(transform(std::identity {}, to_string))
         .connect(slot_function<std::string, std::string>);
     EXPECT_EQ(count, 0);
 
@@ -178,8 +187,8 @@ TEST_F(test_map_transform, int_string_to_string_string_lambda)
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
 
-    int_string_emitter.generic_signal.map<1, 0>()
-        .transform(std::identity {}, to_string)
+    int_string_emitter.generic_signal.apply(map<1, 0>())
+        .apply(transform(std::identity {}, to_string))
         .connect(slot_lambda<std::string, std::string>());
     EXPECT_EQ(count, 0);
 
@@ -203,8 +212,8 @@ TEST_F(test_map_transform, int_string_to_string_string_mutable_lambda)
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
 
-    int_string_emitter.generic_signal.map<1, 0>()
-        .transform(std::identity {}, to_string)
+    int_string_emitter.generic_signal.apply(map<1, 0>())
+        .apply(transform(std::identity {}, to_string))
         .connect(slot_mutable_lambda<std::string, std::string>());
     EXPECT_EQ(count, 0);
 
@@ -228,8 +237,8 @@ TEST_F(test_map_transform, int_string_to_string_string_functor)
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
 
-    int_string_emitter.generic_signal.map<1, 0>()
-        .transform(std::identity {}, to_string)
+    int_string_emitter.generic_signal.apply(map<1, 0>())
+        .apply(transform(std::identity {}, to_string))
         .connect(slot_functor<std::string, std::string>());
     EXPECT_EQ(count, 0);
 
@@ -253,8 +262,8 @@ TEST_F(test_map_transform, int_string_to_string_string_non_const_functor)
     int& count = call_count<std::string, std::string>;
     reset<std::string, std::string>();
 
-    int_string_emitter.generic_signal.map<1, 0>()
-        .transform(std::identity {}, to_string)
+    int_string_emitter.generic_signal.apply(map<1, 0>())
+        .apply(transform(std::identity {}, to_string))
         .connect(slot_non_const_functor<std::string, std::string>());
     EXPECT_EQ(count, 0);
 
