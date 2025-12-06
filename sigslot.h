@@ -262,17 +262,18 @@ constexpr auto partial_call(Callable&& callable, Args&&... args)
 }
 
 template<class Callable, class Tuple>
-concept partially_tuple_callable = requires(Callable callable, Tuple tuple) {
-    is_tuple<Tuple>;
-    {
-        [callable, tuple]<std::size_t... Indexes>(const std::index_sequence<Indexes...>&)
-        {
-            partial_call(
-                callable,
-                std::forward<std::tuple_element_t<Indexes, Tuple>>(std::get<Indexes>(tuple))...);
-        }(std::make_index_sequence<std::tuple_size_v<Tuple>> {})
-    };
+struct partially_tuple_callable_impl: std::false_type
+{
 };
+
+template<class Callable, class... Args>
+    requires partially_callable<Callable, Args...>
+struct partially_tuple_callable_impl<Callable, std::tuple<Args...>>: std::true_type
+{
+};
+
+template<class Callable, class Tuple>
+concept partially_tuple_callable = partially_tuple_callable_impl<Callable, Tuple>::value;
 
 template<class Callable, class Tuple>
     requires partially_tuple_callable<Callable, Tuple>
@@ -291,7 +292,9 @@ constexpr auto partial_tuple_call(Callable&& callable, Tuple&& tuple)
 
 class connection;
 class source;
-template<class Callable>
+class receiver;
+template<class Callable, class Guard = void, execution_policy Policy = synchronous_policy>
+    requires(std::same_as<void, Guard> || std::derived_from<Guard, receiver>)
 class connect;
 
 template<class Source>
@@ -331,9 +334,17 @@ public:
         return std::forward<Self>(self).apply(std::forward<Appliable>(appliable));
     }
 
-    template<source_like Self,
-             partially_tuple_callable<typename std::remove_cvref_t<Self>::args> Callable>
-    auto operator|(this Self&& self, const connect<Callable>& connect)
+    template<source_like Self, class Callable, class Guard, execution_policy Policy>
+        requires(partially_tuple_callable<Callable, typename std::remove_cvref_t<Self>::args> ||
+                 (std::derived_from<Guard, receiver> &&
+                  std::is_member_function_pointer_v<Callable> &&
+                  partially_tuple_callable<
+                      Callable,
+                      std::invoke_result_t<decltype([]<class... Args>(Args&&... args)
+    { return std::tuple_cat(std::forward<Args>(args)...); }),
+                                           std::tuple<Guard>,
+                                           typename std::remove_cvref_t<Self>::args>>))
+    auto operator|(this Self&& self, const connect<Callable, Guard, Policy>& connect)
     {
         return connect.create_connection(std::forward<Self>(self));
     }
@@ -494,6 +505,24 @@ private:
     connection m_connection;
 };
 
+// ### Class receiver
+
+class receiver
+{
+public:
+    template<signal_arg... Args>
+    friend class emitter::signal;
+
+private:
+    // TODO AROSS: Find a way to clean all the signals from emitting sources.
+    void add_emitting_source(connection source) const
+    {
+        m_emitting_sources.emplace_back(std::move(source));
+    }
+
+    mutable std::vector<scoped_connection> m_emitting_sources {};
+};
+
 // ### connectable
 
 // TODO AROSS:
@@ -513,10 +542,105 @@ public:
         return self.m_source.connect_once(self.forwarding_lambda(std::forward<Callable>(callable)),
                                           std::forward<Policy>(policy));
     }
+
+    template<class Self,
+             class Callable,
+             std::derived_from<receiver> Receiver,
+             execution_policy Policy = synchronous_policy>
+    auto connect(this Self&& self, Callable&& callable, const Receiver& guard, Policy&& policy = {})
+        -> connection
+    {
+        return self.m_source.connect(self.forwarding_lambda(std::forward<Callable>(callable)),
+                                     guard,
+                                     std::forward<Policy>(policy));
+    }
+
+    template<class Self,
+             class Callable,
+             std::derived_from<receiver> Receiver,
+             execution_policy Policy = synchronous_policy>
+    auto connect_once(this Self&& self,
+                      Callable&& callable,
+                      const Receiver& guard,
+                      Policy&& policy = {}) -> connection
+    {
+        return self.m_source.connect_once(self.forwarding_lambda(std::forward<Callable>(callable)),
+                                          guard,
+                                          std::forward<Policy>(policy));
+    }
+
+    template<class Self,
+             std::derived_from<receiver> Receiver,
+             class Result,
+             execution_policy Policy = synchronous_policy,
+             class... MemberFunctionArgs>
+    auto connect(this Self&& self,
+                 Result (Receiver::*callable)(MemberFunctionArgs...),
+                 Receiver& guard,
+                 Policy&& policy = {}) -> connection
+    {
+        return self.m_source.connect(
+            self.forwarding_lambda([guard, callable]<class... Args>(Args&&... args) mutable
+        { (guard.*callable)(std::forward<Args>(args)...); }),
+            guard,
+            std::forward<Policy>(policy));
+    }
+
+    template<class Self,
+             std::derived_from<receiver> Receiver,
+             class Result,
+             execution_policy Policy = synchronous_policy,
+             class... MemberFunctionArgs>
+    auto connect_once(this Self&& self,
+                      Result (Receiver::*callable)(MemberFunctionArgs...),
+                      Receiver& guard,
+                      Policy&& policy = {}) -> connection
+    {
+        return self.m_source.connect_once(
+            self.forwarding_lambda([guard, callable]<class... Args>(Args&&... args) mutable
+        { (guard.*callable)(std::forward<Args>(args)...); }),
+            guard,
+            std::forward<Policy>(policy));
+    }
+
+    template<class Self,
+             std::derived_from<receiver> Receiver,
+             class Result,
+             execution_policy Policy = synchronous_policy,
+             class... MemberFunctionArgs>
+    auto connect(this Self&& self,
+                 Result (Receiver::*callable)(MemberFunctionArgs...) const,
+                 const Receiver& guard,
+                 Policy&& policy = {}) -> connection
+    {
+        return self.m_source.connect(
+            self.forwarding_lambda([guard, callable]<class... Args>(Args&&... args) mutable
+        { (guard.*callable)(std::forward<Args>(args)...); }),
+            guard,
+            std::forward<Policy>(policy));
+    }
+
+    template<class Self,
+             std::derived_from<receiver> Receiver,
+             class Result,
+             execution_policy Policy = synchronous_policy,
+             class... MemberFunctionArgs>
+    auto connect_once(this Self&& self,
+                      Result (Receiver::*callable)(MemberFunctionArgs...) const,
+                      const Receiver& guard,
+                      Policy&& policy = {}) -> connection
+    {
+        return self.m_source.connect_once(
+            self.forwarding_lambda([guard, callable]<class... Args>(Args&&... args) mutable
+        { (guard.*callable)(std::forward<Args>(args)...); }),
+            guard,
+            std::forward<Policy>(policy));
+    }
 };
 
 // ### Signal definition
 
+// TODO AROSS: Make connectable?
 // TODO AROSS: operator= strategy for signal
 template<signal_arg... Args>
 class emitter::signal final: public source
@@ -532,6 +656,58 @@ public:
 
     template<partially_callable<Args...> Callable, execution_policy Policy = synchronous_policy>
     auto connect_once(Callable&& callable, Policy&& policy = {}) const -> connection;
+
+    template<partially_callable<Args...> Callable,
+             std::derived_from<receiver> Receiver,
+             execution_policy Policy = synchronous_policy>
+    auto connect(Callable&& callable, const Receiver& guard, Policy&& policy = {}) const
+        -> connection;
+
+    template<partially_callable<Args...> Callable,
+             std::derived_from<receiver> Receiver,
+             execution_policy Policy = synchronous_policy>
+    auto connect_once(Callable&& callable, const Receiver& guard, Policy&& policy = {}) const
+        -> connection;
+
+    template<std::derived_from<receiver> Receiver,
+             class Result,
+             execution_policy Policy = synchronous_policy,
+             class... MemberFunctionArgs>
+        requires partially_callable<Result (Receiver::*)(MemberFunctionArgs...), Receiver, Args...>
+    auto connect(Result (Receiver::*callable)(MemberFunctionArgs...),
+                 Receiver& guard,
+                 Policy&& policy = {}) const -> connection;
+
+    template<std::derived_from<receiver> Receiver,
+             class Result,
+             execution_policy Policy = synchronous_policy,
+             class... MemberFunctionArgs>
+        requires partially_callable<Result (Receiver::*)(MemberFunctionArgs...), Receiver, Args...>
+    auto connect_once(Result (Receiver::*callable)(MemberFunctionArgs...),
+                      Receiver& guard,
+                      Policy&& policy = {}) const -> connection;
+
+    template<std::derived_from<receiver> Receiver,
+             class Result,
+             execution_policy Policy = synchronous_policy,
+             class... MemberFunctionArgs>
+        requires partially_callable<Result (Receiver::*)(MemberFunctionArgs...) const,
+                                    const Receiver,
+                                    Args...>
+    auto connect(Result (Receiver::*callable)(MemberFunctionArgs...) const,
+                 const Receiver& guard,
+                 Policy&& policy = {}) const -> connection;
+
+    template<std::derived_from<receiver> Receiver,
+             class Result,
+             execution_policy Policy = synchronous_policy,
+             class... MemberFunctionArgs>
+        requires partially_callable<Result (Receiver::*)(MemberFunctionArgs...) const,
+                                    const Receiver,
+                                    Args...>
+    auto connect_once(Result (Receiver::*callable)(MemberFunctionArgs...) const,
+                      const Receiver& guard,
+                      Policy&& policy = {}) const -> connection;
 
 private:
     template<std::convertible_to<Args>... EmittedArgs>
@@ -578,11 +754,15 @@ private:
 
 class chainable;
 
-template<std::derived_from<chainable> Chainable, class Callable>
+template<std::derived_from<chainable> Chainable,
+         class Callable,
+         class Guard,
+         execution_policy Policy>
+    requires(std::same_as<void, Guard> || std::derived_from<Guard, receiver>)
 class chain
 {
 public:
-    chain(Chainable&& chainable, const connect<Callable>& connect):
+    chain(Chainable&& chainable, const connect<Callable, Guard, Policy>& connect):
         m_chainable { std::forward<Chainable>(chainable) },
         m_connect { std::move(connect) }
     {
@@ -596,7 +776,7 @@ public:
 
 private:
     std::remove_cvref_t<Chainable> m_chainable;
-    connect<Callable> m_connect;
+    connect<Callable, Guard, Policy> m_connect;
 };
 
 template<std::derived_from<chainable> Lhs, std::derived_from<chainable> Rhs>
@@ -608,8 +788,10 @@ public:
     template<class Self, std::derived_from<chainable> OtherChainable>
     auto operator|(this Self&& self, OtherChainable&& other);
 
-    template<class Self, class Callable>
-    auto operator|(this Self&& self, const connect<Callable>& connect) -> chain<Self, Callable>
+    template<class Self, class Callable, class Guard, execution_policy Policy>
+        requires(std::same_as<void, Guard> || std::derived_from<Guard, receiver>)
+    auto operator|(this Self&& self, const connect<Callable, Guard, Policy>& connect)
+        -> chain<Self, Callable, Guard, Policy>
     {
         return { std::forward<Self>(self), connect };
     }
@@ -654,7 +836,7 @@ public:
     friend connectable;
 
     using args =
-        std::tuple<std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>&&...>;
+        std::tuple<std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>...>;
 
     mapped_source(Source&& origin):
         m_source { std::forward<Source>(origin) }
@@ -1006,25 +1188,261 @@ auto emitter::signal<Args...>::connect_once(Callable&& callable, Policy&& policy
     return { m_slots.back() };
 }
 
+template<signal_arg... Args>
+template<partially_callable<Args...> Callable,
+         std::derived_from<receiver> Receiver,
+         execution_policy Policy>
+auto emitter::signal<Args...>::connect(Callable&& callable,
+                                       const Receiver& guard,
+                                       Policy&& policy) const -> connection
+{
+    m_slots.emplace_back(
+        std::make_shared<connection_holder_implementation>(*this,
+                                                           std::forward<Callable>(callable),
+                                                           std::forward<Policy>(policy)));
+
+    guard.add_emitting_source({ m_slots.back() });
+
+    return { m_slots.back() };
+}
+
+template<signal_arg... Args>
+template<partially_callable<Args...> Callable,
+         std::derived_from<receiver> Receiver,
+         execution_policy Policy>
+auto emitter::signal<Args...>::connect_once(Callable&& callable,
+                                            const Receiver& guard,
+                                            Policy&& policy) const -> connection
+{
+    m_slots.emplace_back(
+        std::make_shared<connection_holder_implementation>(*this,
+                                                           std::forward<Callable>(callable),
+                                                           std::forward<Policy>(policy),
+                                                           true));
+
+    guard.add_emitting_source({ m_slots.back() });
+
+    return { m_slots.back() };
+}
+
+template<signal_arg... Args>
+template<std::derived_from<receiver> Receiver,
+         class Result,
+         execution_policy Policy,
+         class... MemberFunctionArgs>
+    requires partially_callable<Result (Receiver::*)(MemberFunctionArgs...), Receiver, Args...>
+auto emitter::signal<Args...>::connect(Result (Receiver::*callable)(MemberFunctionArgs...),
+                                       Receiver& guard,
+                                       Policy&& policy) const -> connection
+{
+    m_slots.emplace_back(std::make_shared<connection_holder_implementation>(
+        *this,
+        [&guard, callable]<class... CallArgs>(CallArgs&&... args) mutable
+    { (guard.*callable)(std::forward<CallArgs>(args)...); },
+        std::forward<Policy>(policy)));
+
+    guard.add_emitting_source({ m_slots.back() });
+
+    return { m_slots.back() };
+}
+
+template<signal_arg... Args>
+template<std::derived_from<receiver> Receiver,
+         class Result,
+         execution_policy Policy,
+         class... MemberFunctionArgs>
+    requires partially_callable<Result (Receiver::*)(MemberFunctionArgs...), Receiver, Args...>
+auto emitter::signal<Args...>::connect_once(Result (Receiver::*callable)(MemberFunctionArgs...),
+                                            Receiver& guard,
+                                            Policy&& policy) const -> connection
+{
+    m_slots.emplace_back(std::make_shared<connection_holder_implementation>(
+        *this,
+        [&guard, callable]<class... CallArgs>(CallArgs&&... args) mutable
+    { (guard.*callable)(std::forward<CallArgs>(args)...); },
+        std::forward<Policy>(policy),
+        true));
+
+    guard.add_emitting_source({ m_slots.back() });
+
+    return { m_slots.back() };
+}
+
+template<signal_arg... Args>
+template<std::derived_from<receiver> Receiver,
+         class Result,
+         execution_policy Policy,
+         class... MemberFunctionArgs>
+    requires partially_callable<Result (Receiver::*)(MemberFunctionArgs...) const,
+                                const Receiver,
+                                Args...>
+auto emitter::signal<Args...>::connect(Result (Receiver::*callable)(MemberFunctionArgs...) const,
+                                       const Receiver& guard,
+                                       Policy&& policy) const -> connection
+{
+    m_slots.emplace_back(std::make_shared<connection_holder_implementation>(
+        *this,
+        [&guard, callable]<class... CallArgs>(CallArgs&&... args) mutable
+    { (guard.*callable)(std::forward<CallArgs>(args)...); },
+        std::forward<Policy>(policy)));
+
+    guard.add_emitting_source({ m_slots.back() });
+
+    return { m_slots.back() };
+}
+
+template<signal_arg... Args>
+template<std::derived_from<receiver> Receiver,
+         class Result,
+         execution_policy Policy,
+         class... MemberFunctionArgs>
+    requires partially_callable<Result (Receiver::*)(MemberFunctionArgs...) const,
+                                const Receiver,
+                                Args...>
+auto emitter::signal<Args...>::connect_once(Result (Receiver::*callable)(MemberFunctionArgs...)
+                                                const,
+                                            const Receiver& guard,
+                                            Policy&& policy) const -> connection
+{
+    m_slots.emplace_back(std::make_shared<connection_holder_implementation>(
+        *this,
+        [&guard, callable]<class... CallArgs>(CallArgs&&... args) mutable
+    { (guard.*callable)(std::forward<CallArgs>(args)...); },
+        std::forward<Policy>(policy),
+        true));
+
+    guard.add_emitting_source({ m_slots.back() });
+
+    return { m_slots.back() };
+}
+
 // ### connect class
 
-template<class Callable>
-class connect
+template<class Callable, execution_policy Policy>
+class connect<Callable, void, Policy>
 {
 public:
-    connect(Callable&& callable):
-        m_callable { std::forward<Callable>(callable) }
+    connect(Callable&& callable, Policy&& policy = {}):
+        m_callable { std::forward<Callable>(callable) },
+        m_policy { std::forward<Policy>(policy) }
     {
     }
 
     template<source_like Source>
     auto create_connection(Source&& origin) const -> connection
     {
-        return origin.connect(m_callable);
+        return origin.connect(m_callable, m_policy);
     }
 
 private:
     std::decay_t<Callable> m_callable;
+    std::remove_reference_t<Policy> m_policy;
 };
+
+template<class Callable, class Guard, execution_policy Policy>
+    requires std::derived_from<Guard, receiver>
+class connect<Callable, Guard, Policy>
+{
+public:
+    connect(Callable&& callable, const Guard& guard, Policy&& policy = {}):
+        m_callable { std::forward<Callable>(callable) },
+        m_policy { std::forward<Policy>(policy) },
+        m_guard { guard }
+    {
+    }
+
+    template<source_like Source>
+    auto create_connection(Source&& origin) const -> connection
+    {
+        return origin.connect(m_callable, m_guard, m_policy);
+    }
+
+private:
+    std::decay_t<Callable> m_callable;
+    std::remove_reference_t<Policy> m_policy;
+    const Guard& m_guard;
+};
+
+template<class Result, class... Args, class Guard, execution_policy Policy>
+    requires std::derived_from<Guard, receiver>
+class connect<Result (Guard::*)(Args...), Guard, Policy>
+{
+public:
+    connect(Result (Guard::*callable)(Args...), Guard& guard, Policy&& policy = {}):
+        m_callable { callable },
+        m_policy { std::forward<Policy>(policy) },
+        m_guard { guard }
+    {
+    }
+
+    template<source_like Source>
+    auto create_connection(Source&& origin) const -> connection
+    {
+        return origin.connect(m_callable, m_guard, m_policy);
+    }
+
+private:
+    Result (Guard::*m_callable)(Args...);
+    std::remove_reference_t<Policy> m_policy;
+    Guard& m_guard;
+};
+
+template<class Result, class... Args, class Guard, execution_policy Policy>
+    requires std::derived_from<Guard, receiver>
+class connect<Result (Guard::*)(Args...) const, const Guard, Policy>
+{
+public:
+    connect(Result (Guard::*callable)(Args...) const, const Guard& guard, Policy&& policy = {}):
+        m_callable { callable },
+        m_policy { std::forward<Policy>(policy) },
+        m_guard { guard }
+    {
+    }
+
+    template<source_like Source>
+    auto create_connection(Source&& origin) const -> connection
+    {
+        return origin.connect(m_callable, m_guard, m_policy);
+    }
+
+private:
+    Result (Guard::*m_callable)(Args...) const;
+    std::remove_reference_t<Policy> m_policy;
+    const Guard& m_guard;
+};
+
+template<class Result, class... Args, class Guard, execution_policy Policy>
+    requires std::derived_from<Guard, receiver>
+connect(Result (Guard::*)(Args...) const, const Guard&, Policy)
+    -> connect<Result (Guard::*)(Args...) const, Guard, Policy>;
+
+template<class Result, class... Args, class Guard>
+    requires std::derived_from<Guard, receiver>
+connect(Result (Guard::*)(Args...) const, const Guard&)
+    -> connect<Result (Guard::*)(Args...) const, Guard, synchronous_policy>;
+
+template<class Result, class... Args, class Guard, execution_policy Policy>
+    requires std::derived_from<Guard, receiver>
+connect(Result (Guard::*)(Args...), Guard&, Policy)
+    -> connect<Result (Guard::*)(Args...), Guard, Policy>;
+
+template<class Result, class... Args, class Guard>
+    requires std::derived_from<Guard, receiver>
+connect(Result (Guard::*)(Args...), Guard&)
+    -> connect<Result (Guard::*)(Args...), Guard, synchronous_policy>;
+
+template<class Callable, class Guard, execution_policy Policy>
+    requires std::derived_from<Guard, receiver>
+connect(Callable&&, const Guard&, Policy&&) -> connect<Callable, Guard, Policy>;
+
+template<class Callable, class Guard>
+    requires std::derived_from<Guard, receiver>
+connect(Callable&&, const Guard&) -> connect<Callable, Guard, synchronous_policy>;
+
+template<class Callable, execution_policy Policy>
+connect(Callable&&, Policy&&) -> connect<Callable, void, Policy>;
+
+template<class Callable>
+connect(Callable&&) -> connect<Callable, void, synchronous_policy>;
 
 #endif // SIGSLOT_H_

@@ -20,6 +20,7 @@ add_executable(tests
     test_filter.cpp
     test_pipe_operator.cpp
     test_chain.cpp
+    test_guard.cpp
 )
 
 target_link_libraries(tests
