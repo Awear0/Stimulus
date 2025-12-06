@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -539,19 +540,30 @@ class guard
     // TODO AROSS: Make sure it's not exposed through receiver
 
 public:
+    guard() = default;
+
+    guard(const guard& other) = delete;
+
+    guard(guard&& other):
+        m_emitting_sources { std::move(other.m_emitting_sources) }
+    {
+    }
+
     void clean(emitter::connection_holder* holder) const
     {
+        std::lock_guard lock { m_mutex };
         std::erase(m_emitting_sources, holder);
     }
 
 protected:
-    // TODO AROSS: Find a way to clean all the signals from emitting sources.
     void add_emitting_source(connection source) const
     {
+        std::lock_guard lock { m_mutex };
         m_emitting_sources.emplace_back(std::move(source));
     }
 
     mutable std::vector<scoped_connection> m_emitting_sources {};
+    mutable std::mutex m_mutex;
 };
 
 class receiver: public guard
@@ -757,7 +769,7 @@ private:
             return;
         }
 
-        auto slots { m_slots };
+        auto slots { copy_slots() };
 
         auto begin { slots.begin() };
         auto previous_to_end { std::prev(slots.end()) };
@@ -774,12 +786,20 @@ private:
 
     class connection_holder_implementation;
 
+    auto copy_slots() const -> std::vector<std::shared_ptr<connection_holder_implementation>>
+    {
+        std::lock_guard lock { m_mutex };
+        return m_slots;
+    }
+
     void disconnect(connection_holder_implementation* holder) const
     {
+        std::lock_guard lock { m_mutex };
         std::erase_if(m_slots, [holder](const auto& slot) { return slot.get() == holder; });
     }
 
     mutable std::vector<std::shared_ptr<connection_holder_implementation>> m_slots {};
+    mutable std::mutex m_mutex;
 };
 
 // ### class chainable
