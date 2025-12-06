@@ -356,6 +356,8 @@ class emitter
 {
 public:
     friend class connection;
+    friend class scoped_connection;
+    friend class guard;
 
     virtual ~emitter() = default;
 
@@ -461,6 +463,11 @@ public:
         locked_holder->resume();
     }
 
+    auto operator==(emitter::connection_holder* holder) -> bool
+    {
+        return m_holder.lock().get() == holder;
+    }
+
 private:
     std::weak_ptr<emitter::connection_holder> m_holder;
 };
@@ -473,6 +480,21 @@ public:
     {
     }
 
+    scoped_connection(const scoped_connection&) = delete;
+
+    scoped_connection(scoped_connection&& other):
+        m_connection { std::move(other.m_connection) }
+    {
+    }
+
+    auto operator=(const scoped_connection&) -> scoped_connection& = delete;
+
+    auto operator=(scoped_connection&& other) -> scoped_connection&
+    {
+        m_connection = std::move(other.m_connection);
+        return *this;
+    }
+
     ~scoped_connection()
     {
         disconnect();
@@ -481,6 +503,11 @@ public:
     void disconnect()
     {
         m_connection.disconnect();
+    }
+
+    auto operator==(emitter::connection_holder* holder) -> bool
+    {
+        return m_connection == holder;
     }
 
 private:
@@ -507,13 +534,17 @@ private:
 
 // ### Class receiver
 
-class receiver
+class guard
 {
-public:
-    template<signal_arg... Args>
-    friend class emitter::signal;
+    // TODO AROSS: Make sure it's not exposed through receiver
 
-private:
+public:
+    void clean(emitter::connection_holder* holder) const
+    {
+        std::erase(m_emitting_sources, holder);
+    }
+
+protected:
     // TODO AROSS: Find a way to clean all the signals from emitting sources.
     void add_emitting_source(connection source) const
     {
@@ -521,6 +552,13 @@ private:
     }
 
     mutable std::vector<scoped_connection> m_emitting_sources {};
+};
+
+class receiver: public guard
+{
+public:
+    template<signal_arg... Args>
+    friend class emitter::signal;
 };
 
 // ### connectable
@@ -643,7 +681,8 @@ public:
 // TODO AROSS: Make connectable?
 // TODO AROSS: operator= strategy for signal
 template<signal_arg... Args>
-class emitter::signal final: public source
+class emitter::signal final: public source,
+                             public guard
 {
 public:
     using args = std::tuple<Args...>;
@@ -740,14 +779,7 @@ private:
         std::erase_if(m_slots, [holder](const auto& slot) { return slot.get() == holder; });
     }
 
-    // TODO AROSS: Find a way to clean all the signals from emitting sources.
-    void add_emitting_source(connection source) const
-    {
-        m_emitting_sources.emplace_back(std::move(source));
-    }
-
     mutable std::vector<std::shared_ptr<connection_holder_implementation>> m_slots {};
-    mutable std::vector<scoped_connection> m_emitting_sources {};
 };
 
 // ### class chainable
@@ -1067,6 +1099,21 @@ public:
     {
     }
 
+    template<partially_callable<Args...> Callable, execution_policy Policy>
+    connection_holder_implementation(const signal& connected_signal,
+                                     Callable&& callable,
+                                     Policy&& policy,
+                                     guard& guard,
+                                     bool single_shot = false):
+        m_slot { [callable = std::forward<Callable>(callable)](Args&&... args) mutable
+    { partial_call(callable, std::forward<Args>(args)...); } },
+        m_signal { connected_signal },
+        m_guard { &guard },
+        m_policy(std::forward<Policy>(policy)),
+        m_single_shot { single_shot }
+    {
+    }
+
     template<class... EmittedArgs>
         requires std::invocable<signal::slot, EmittedArgs...>
     void operator()(EmittedArgs&&... args)
@@ -1096,6 +1143,12 @@ public:
     void disconnect() override
     {
         m_signal.disconnect(this);
+        if (m_guard)
+        {
+            guard* guard { nullptr };
+            std::swap(guard, m_guard);
+            guard->clean(this);
+        }
     }
 
     void suspend() override
@@ -1111,6 +1164,7 @@ public:
 private:
     signal::slot m_slot;
     const signal& m_signal;
+    guard* m_guard { nullptr };
     execution_policy_holder m_policy;
     bool m_suspended { false };
     bool m_single_shot;
