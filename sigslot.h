@@ -580,7 +580,7 @@ public:
                  Policy&& policy = {}) -> connection
     {
         return self.m_source.connect(
-            self.forwarding_lambda([guard, callable]<class... Args>(Args&&... args) mutable
+            self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
         { (guard.*callable)(std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
@@ -597,7 +597,7 @@ public:
                       Policy&& policy = {}) -> connection
     {
         return self.m_source.connect_once(
-            self.forwarding_lambda([guard, callable]<class... Args>(Args&&... args) mutable
+            self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
         { (guard.*callable)(std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
@@ -614,7 +614,7 @@ public:
                  Policy&& policy = {}) -> connection
     {
         return self.m_source.connect(
-            self.forwarding_lambda([guard, callable]<class... Args>(Args&&... args) mutable
+            self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
         { (guard.*callable)(std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
@@ -631,7 +631,7 @@ public:
                       Policy&& policy = {}) -> connection
     {
         return self.m_source.connect_once(
-            self.forwarding_lambda([guard, callable]<class... Args>(Args&&... args) mutable
+            self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
         { (guard.*callable)(std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
