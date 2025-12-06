@@ -761,6 +761,14 @@ public:
                       Policy&& policy = {}) const -> connection;
 
 private:
+    template<std::derived_from<receiver> Receiver, class MemberFunction>
+        requires partially_callable<MemberFunction, Receiver, Args...>
+    static auto member_function_lambda(MemberFunction member_function, Receiver& guard)
+    {
+        return [&guard, member_function]<class... CallArgs>(CallArgs&&... args) mutable
+        { (guard.*member_function)(std::forward<CallArgs>(args)...); };
+    }
+
     template<std::convertible_to<Args>... EmittedArgs>
     void emit(EmittedArgs&&... emitted_args) const
     {
@@ -1271,14 +1279,10 @@ auto emitter::signal<Args...>::connect(Callable&& callable,
                                        const Receiver& guard,
                                        Policy&& policy) const -> connection
 {
-    m_slots.emplace_back(
-        std::make_shared<connection_holder_implementation>(*this,
-                                                           std::forward<Callable>(callable),
-                                                           std::forward<Policy>(policy)));
+    auto connection { connect(std::forward<Callable>(callable), std::forward<Policy>(policy)) };
+    guard.add_emitting_source(connection);
 
-    guard.add_emitting_source({ m_slots.back() });
-
-    return { m_slots.back() };
+    return connection;
 }
 
 template<signal_arg... Args>
@@ -1289,15 +1293,11 @@ auto emitter::signal<Args...>::connect_once(Callable&& callable,
                                             const Receiver& guard,
                                             Policy&& policy) const -> connection
 {
-    m_slots.emplace_back(
-        std::make_shared<connection_holder_implementation>(*this,
-                                                           std::forward<Callable>(callable),
-                                                           std::forward<Policy>(policy),
-                                                           true));
+    auto connection { connect_once(std::forward<Callable>(callable),
+                                   std::forward<Policy>(policy)) };
+    guard.add_emitting_source(connection);
 
-    guard.add_emitting_source({ m_slots.back() });
-
-    return { m_slots.back() };
+    return connection;
 }
 
 template<signal_arg... Args>
@@ -1310,15 +1310,7 @@ auto emitter::signal<Args...>::connect(Result (Receiver::*callable)(MemberFuncti
                                        Receiver& guard,
                                        Policy&& policy) const -> connection
 {
-    m_slots.emplace_back(std::make_shared<connection_holder_implementation>(
-        *this,
-        [&guard, callable]<class... CallArgs>(CallArgs&&... args) mutable
-    { (guard.*callable)(std::forward<CallArgs>(args)...); },
-        std::forward<Policy>(policy)));
-
-    guard.add_emitting_source({ m_slots.back() });
-
-    return { m_slots.back() };
+    return connect(member_function_lambda(callable, guard), guard, std::forward<Policy>(policy));
 }
 
 template<signal_arg... Args>
@@ -1331,16 +1323,9 @@ auto emitter::signal<Args...>::connect_once(Result (Receiver::*callable)(MemberF
                                             Receiver& guard,
                                             Policy&& policy) const -> connection
 {
-    m_slots.emplace_back(std::make_shared<connection_holder_implementation>(
-        *this,
-        [&guard, callable]<class... CallArgs>(CallArgs&&... args) mutable
-    { (guard.*callable)(std::forward<CallArgs>(args)...); },
-        std::forward<Policy>(policy),
-        true));
-
-    guard.add_emitting_source({ m_slots.back() });
-
-    return { m_slots.back() };
+    return connect_once(member_function_lambda(callable, guard),
+                        guard,
+                        std::forward<Policy>(policy));
 }
 
 template<signal_arg... Args>
@@ -1355,15 +1340,7 @@ auto emitter::signal<Args...>::connect(Result (Receiver::*callable)(MemberFuncti
                                        const Receiver& guard,
                                        Policy&& policy) const -> connection
 {
-    m_slots.emplace_back(std::make_shared<connection_holder_implementation>(
-        *this,
-        [&guard, callable]<class... CallArgs>(CallArgs&&... args) mutable
-    { (guard.*callable)(std::forward<CallArgs>(args)...); },
-        std::forward<Policy>(policy)));
-
-    guard.add_emitting_source({ m_slots.back() });
-
-    return { m_slots.back() };
+    return connect(member_function_lambda(callable, guard), guard, std::forward<Policy>(policy));
 }
 
 template<signal_arg... Args>
@@ -1379,16 +1356,9 @@ auto emitter::signal<Args...>::connect_once(Result (Receiver::*callable)(MemberF
                                             const Receiver& guard,
                                             Policy&& policy) const -> connection
 {
-    m_slots.emplace_back(std::make_shared<connection_holder_implementation>(
-        *this,
-        [&guard, callable]<class... CallArgs>(CallArgs&&... args) mutable
-    { (guard.*callable)(std::forward<CallArgs>(args)...); },
-        std::forward<Policy>(policy),
-        true));
-
-    guard.add_emitting_source({ m_slots.back() });
-
-    return { m_slots.back() };
+    return connect_once(member_function_lambda(callable, guard),
+                        guard,
+                        std::forward<Policy>(policy));
 }
 
 // ### connect class
