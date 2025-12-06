@@ -581,7 +581,7 @@ public:
     {
         return self.m_source.connect(
             self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
-        { (guard.*callable)(std::forward<Args>(args)...); }),
+        { partial_call(callable, guard, std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
     }
@@ -598,7 +598,7 @@ public:
     {
         return self.m_source.connect_once(
             self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
-        { (guard.*callable)(std::forward<Args>(args)...); }),
+        { partial_call(callable, guard, std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
     }
@@ -615,7 +615,7 @@ public:
     {
         return self.m_source.connect(
             self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
-        { (guard.*callable)(std::forward<Args>(args)...); }),
+        { partial_call(callable, guard, std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
     }
@@ -632,7 +632,7 @@ public:
     {
         return self.m_source.connect_once(
             self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
-        { (guard.*callable)(std::forward<Args>(args)...); }),
+        { partial_call(callable, guard, std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
     }
