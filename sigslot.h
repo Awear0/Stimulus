@@ -1240,6 +1240,7 @@ template<signal_arg... Args>
 template<partially_callable<Args...> Callable, execution_policy Policy>
 auto emitter::signal<Args...>::connect(Callable&& callable, Policy&& policy) const -> connection
 {
+    std::lock_guard lock { m_mutex };
     m_slots.emplace_back(
         std::make_shared<connection_holder_implementation>(*this,
                                                            std::forward<Callable>(callable),
