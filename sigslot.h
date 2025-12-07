@@ -298,6 +298,7 @@ template<class Callable, class Guard = void, execution_policy Policy = synchrono
     requires(std::same_as<void, Guard> || std::derived_from<Guard, receiver>)
 class connect;
 
+// TODO AROSS: Complete
 template<class Source>
 concept source_like =
     requires(const Source& source, typename std::remove_cvref_t<Source>::args tuple) {
@@ -319,6 +320,57 @@ concept appliable = requires(const Source& source, Appliable appliable) {
     { appliable.accept(source) } -> source_like;
 };
 
+template<class... Tuples>
+struct tuple_cat_result;
+
+template<class... Tuples>
+using tuple_cat_result_t = tuple_cat_result<Tuples...>::type;
+
+template<>
+struct tuple_cat_result<>
+{
+    using type = std::tuple<>;
+};
+
+template<class... Args>
+struct tuple_cat_result<std::tuple<Args...>>
+{
+    using type = std::tuple<Args...>;
+};
+
+template<class... LhsArgs, class... RhsArgs>
+struct tuple_cat_result<std::tuple<LhsArgs...>, std::tuple<RhsArgs...>>
+{
+    using type = std::tuple<LhsArgs..., RhsArgs...>;
+};
+
+template<class Lhs, class Rhs, class... Others>
+struct tuple_cat_result<Lhs, Rhs, Others...>
+{
+    using type = tuple_cat_result_t<tuple_cat_result_t<Lhs, Rhs>, Others...>;
+};
+
+template<class Self, class Callable, class Guard>
+concept callable_with_no_guard = requires {
+    std::same_as<void, Guard>;
+    partially_tuple_callable<Callable, typename std::remove_cvref_t<Self>::args>;
+};
+
+template<class Self, class Callable, class Guard>
+concept callable_with_guard = requires {
+    std::derived_from<Guard, receiver>;
+    partially_tuple_callable<Callable, typename std::remove_cvref_t<Self>::args>;
+};
+
+template<class Self, class Callable, class Guard>
+concept method_with_guard = requires {
+    std::derived_from<Guard, receiver>;
+    std::is_member_function_pointer_v<Callable>;
+    partially_tuple_callable<
+        Callable,
+        tuple_cat_result_t<std::tuple<Guard>, typename std::remove_cvref_t<Self>::args>>;
+};
+
 // ### Class source
 class source
 {
@@ -336,15 +388,9 @@ public:
     }
 
     template<source_like Self, class Callable, class Guard, execution_policy Policy>
-        requires(partially_tuple_callable<Callable, typename std::remove_cvref_t<Self>::args> ||
-                 (std::derived_from<Guard, receiver> &&
-                  std::is_member_function_pointer_v<Callable> &&
-                  partially_tuple_callable<
-                      Callable,
-                      std::invoke_result_t<decltype([]<class... Args>(Args&&... args)
-    { return std::tuple_cat(std::forward<Args>(args)...); }),
-                                           std::tuple<Guard>,
-                                           typename std::remove_cvref_t<Self>::args>>))
+        requires(callable_with_no_guard<Self, Callable, Guard> ||
+                 callable_with_guard<Self, Callable, Guard> ||
+                 method_with_guard<Self, Callable, Guard>)
     auto operator|(this Self&& self, const connect<Callable, Guard, Policy>& connect)
     {
         return connect.create_connection(std::forward<Self>(self));
@@ -366,7 +412,8 @@ protected:
     template<signal_arg... Args>
     class signal;
 
-    template<class Emitter, signal_arg... Args, std::convertible_to<Args>... EmittedArgs>
+    template<class Emitter, signal_arg... Args, class... EmittedArgs>
+        requires std::invocable<typename signal<Args...>::slot, EmittedArgs&&...>
     void emit(this const Emitter& self,
               signal<Args...> Emitter::* emitted_signal,
               EmittedArgs&&... emitted_args)
@@ -375,12 +422,11 @@ protected:
     }
 
 protected:
-    // TODO AROSS: Handle automatic removal when receiver is destroyed
     template<class Receiver,
              signal_arg... ReceiverArgs,
              source_like Emitter,
              execution_policy Policy = synchronous_policy>
-        requires(partially_tuple_callable<std::function<void(ReceiverArgs...)>,
+        requires(partially_tuple_callable<typename signal<ReceiverArgs...>::slot,
                                           typename std::remove_cvref_t<Emitter>::args>)
     auto connect(this const Receiver& self,
                  Emitter&& emitter,
@@ -391,7 +437,7 @@ protected:
              signal_arg... ReceiverArgs,
              source_like Emitter,
              execution_policy Policy = synchronous_policy>
-        requires(partially_tuple_callable<std::function<void(ReceiverArgs...)>,
+        requires(partially_tuple_callable<typename signal<ReceiverArgs...>::slot,
                                           typename std::remove_cvref_t<Emitter>::args>)
     auto connect_once(this const Receiver& self,
                       Emitter&& emitter,
@@ -761,6 +807,17 @@ public:
                       Policy&& policy = {}) const -> connection;
 
 private:
+    template<partially_callable<Args...> Callable, execution_policy Policy>
+    auto connect_impl(Callable&& callable, Policy&& policy, bool connect_once) const -> connection;
+
+    template<partially_callable<Args...> Callable,
+             std::derived_from<receiver> Receiver,
+             execution_policy Policy>
+    auto connect_with_guard(Callable&& callable,
+                            const Receiver& guard,
+                            Policy&& policy,
+                            bool connect_once) const -> connection;
+
     template<std::derived_from<receiver> Receiver, class MemberFunction>
         requires partially_callable<MemberFunction, Receiver, Args...>
     static auto member_function_lambda(MemberFunction member_function, Receiver& guard)
@@ -769,15 +826,16 @@ private:
         { (guard.*member_function)(std::forward<CallArgs>(args)...); };
     }
 
-    template<std::convertible_to<Args>... EmittedArgs>
+    template<class... EmittedArgs>
+        requires std::invocable<slot, EmittedArgs&&...>
     void emit(EmittedArgs&&... emitted_args) const
     {
-        if (m_slots.empty())
+        auto slots { copy_slots() };
+
+        if (slots.empty())
         {
             return;
         }
-
-        auto slots { copy_slots() };
 
         auto begin { slots.begin() };
         auto previous_to_end { std::prev(slots.end()) };
@@ -886,9 +944,15 @@ auto chainable::operator|(this Self&& self, OtherChainable&& other)
 
 // ### class map
 
+template<class Source, std::size_t... Indexes>
+concept valid_map = requires {
+    source_like<Source>;
+    (in_tuple_range<Indexes, typename std::remove_cvref_t<Source>::args> && ...);
+    all_different<Indexes...>;
+};
+
 template<source_like Source, std::size_t... Indexes>
-    requires((in_tuple_range<Indexes, typename std::remove_cvref_t<Source>::args> && ...) &&
-             all_different<Indexes...>)
+    requires(valid_map<Source, Indexes...>)
 class mapped_source: public source,
                      public connectable
 {
@@ -1046,12 +1110,19 @@ private:
 
 // ### map filter
 
+template<class Source, class Filter>
+concept valid_filter = requires {
+    source_like<Source>;
+    partially_tuple_callable<Filter, typename std::remove_cvref_t<Source>::args>;
+    std::convertible_to<decltype(partial_tuple_call(
+                            std::declval<Filter>(),
+                            std::declval<typename std::remove_cvref_t<Source>::args>())),
+                        bool>;
+};
+
 template<source_like Source,
          partially_tuple_callable<typename std::remove_cvref_t<Source>::args> Filter>
-    requires std::convertible_to<decltype(partial_tuple_call(
-                                     std::declval<Filter>(),
-                                     std::declval<typename std::remove_cvref_t<Source>::args>())),
-                                 bool>
+    requires valid_filter<Source, Filter>
 class filtered_source: public source,
                        public connectable
 {
@@ -1119,8 +1190,7 @@ public:
                                      Callable&& callable,
                                      Policy&& policy,
                                      bool single_shot = false):
-        m_slot { [callable = std::forward<Callable>(callable)](Args&&... args) mutable
-    { partial_call(callable, std::forward<Args>(args)...); } },
+        m_slot { generate_slot(std::forward<Callable>(callable)) },
         m_signal { connected_signal },
         m_policy(std::forward<Policy>(policy)),
         m_single_shot { single_shot }
@@ -1133,12 +1203,11 @@ public:
                                      Policy&& policy,
                                      guard& guard,
                                      bool single_shot = false):
-        m_slot { [callable = std::forward<Callable>(callable)](Args&&... args) mutable
-    { partial_call(callable, std::forward<Args>(args)...); } },
-        m_signal { connected_signal },
-        m_guard { &guard },
-        m_policy(std::forward<Policy>(policy)),
-        m_single_shot { single_shot }
+        connection_holder_implementation(connected_signal,
+                                         std::forward<Callable>(callable),
+                                         std::forward<Policy>(policy),
+                                         single_shot),
+        m_guard { &guard }
     {
     }
 
@@ -1190,6 +1259,13 @@ public:
     }
 
 private:
+    template<partially_callable<Args...> Callable>
+    static auto generate_slot(Callable&& callable)
+    {
+        return [callable = std::forward<Callable>(callable)](Args&&... args) mutable
+        { partial_call(callable, std::forward<Args>(args)...); };
+    }
+
     signal::slot m_slot;
     const signal& m_signal;
     guard* m_guard { nullptr };
@@ -1201,7 +1277,7 @@ private:
 // ### emitter implementation
 
 template<class Receiver, signal_arg... ReceiverArgs, source_like Emitter, execution_policy Policy>
-    requires(partially_tuple_callable<std::function<void(ReceiverArgs...)>,
+    requires(partially_tuple_callable<typename emitter::signal<ReceiverArgs...>::slot,
                                       typename std::remove_cvref_t<Emitter>::args>)
 auto emitter::connect(this const Receiver& self,
                       Emitter&& emitter,
@@ -1215,7 +1291,7 @@ auto emitter::connect(this const Receiver& self,
 }
 
 template<class Receiver, signal_arg... ReceiverArgs, source_like Emitter, execution_policy Policy>
-    requires(partially_tuple_callable<std::function<void(ReceiverArgs...)>,
+    requires(partially_tuple_callable<typename emitter::signal<ReceiverArgs...>::slot,
                                       typename std::remove_cvref_t<Emitter>::args>)
 auto emitter::connect_once(this const Receiver& self,
                            Emitter&& emitter,
@@ -1246,15 +1322,25 @@ auto emitter::forwarding_lambda(this const Receiver& self,
 
 template<signal_arg... Args>
 template<partially_callable<Args...> Callable, execution_policy Policy>
-auto emitter::signal<Args...>::connect(Callable&& callable, Policy&& policy) const -> connection
+auto emitter::signal<Args...>::connect_impl(Callable&& callable,
+                                            Policy&& policy,
+                                            bool connect_once) const -> connection
 {
     std::lock_guard lock { m_mutex };
     m_slots.emplace_back(
         std::make_shared<connection_holder_implementation>(*this,
                                                            std::forward<Callable>(callable),
-                                                           std::forward<Policy>(policy)));
+                                                           std::forward<Policy>(policy),
+                                                           connect_once));
 
     return { m_slots.back() };
+}
+
+template<signal_arg... Args>
+template<partially_callable<Args...> Callable, execution_policy Policy>
+auto emitter::signal<Args...>::connect(Callable&& callable, Policy&& policy) const -> connection
+{
+    return connect_impl(std::forward<Callable>(callable), std::forward<Policy>(policy), false);
 }
 
 template<signal_arg... Args>
@@ -1262,13 +1348,24 @@ template<partially_callable<Args...> Callable, execution_policy Policy>
 auto emitter::signal<Args...>::connect_once(Callable&& callable, Policy&& policy) const
     -> connection
 {
-    m_slots.emplace_back(
-        std::make_shared<connection_holder_implementation>(*this,
-                                                           std::forward<Callable>(callable),
-                                                           std::forward<Policy>(policy),
-                                                           true));
+    return connect_impl(std::forward<Callable>(callable), std::forward<Policy>(policy), true);
+}
 
-    return { m_slots.back() };
+template<signal_arg... Args>
+template<partially_callable<Args...> Callable,
+         std::derived_from<receiver> Receiver,
+         execution_policy Policy>
+auto emitter::signal<Args...>::connect_with_guard(Callable&& callable,
+                                                  const Receiver& guard,
+                                                  Policy&& policy,
+                                                  bool connect_once) const -> connection
+{
+    auto connection {
+        connect_impl(std::forward<Callable>(callable), std::forward<Policy>(policy), connect_once)
+    };
+    guard.add_emitting_source(connection);
+
+    return connection;
 }
 
 template<signal_arg... Args>
@@ -1279,10 +1376,10 @@ auto emitter::signal<Args...>::connect(Callable&& callable,
                                        const Receiver& guard,
                                        Policy&& policy) const -> connection
 {
-    auto connection { connect(std::forward<Callable>(callable), std::forward<Policy>(policy)) };
-    guard.add_emitting_source(connection);
-
-    return connection;
+    return connect_with_guard(std::forward<Callable>(callable),
+                              guard,
+                              std::forward<Policy>(policy),
+                              false);
 }
 
 template<signal_arg... Args>
@@ -1293,11 +1390,10 @@ auto emitter::signal<Args...>::connect_once(Callable&& callable,
                                             const Receiver& guard,
                                             Policy&& policy) const -> connection
 {
-    auto connection { connect_once(std::forward<Callable>(callable),
-                                   std::forward<Policy>(policy)) };
-    guard.add_emitting_source(connection);
-
-    return connection;
+    return connect_with_guard(std::forward<Callable>(callable),
+                              guard,
+                              std::forward<Policy>(policy),
+                              true);
 }
 
 template<signal_arg... Args>
@@ -1310,7 +1406,10 @@ auto emitter::signal<Args...>::connect(Result (Receiver::*callable)(MemberFuncti
                                        Receiver& guard,
                                        Policy&& policy) const -> connection
 {
-    return connect(member_function_lambda(callable, guard), guard, std::forward<Policy>(policy));
+    return connect_with_guard(member_function_lambda(callable, guard),
+                              guard,
+                              std::forward<Policy>(policy),
+                              false);
 }
 
 template<signal_arg... Args>
@@ -1323,9 +1422,10 @@ auto emitter::signal<Args...>::connect_once(Result (Receiver::*callable)(MemberF
                                             Receiver& guard,
                                             Policy&& policy) const -> connection
 {
-    return connect_once(member_function_lambda(callable, guard),
-                        guard,
-                        std::forward<Policy>(policy));
+    return connect_with_guard(member_function_lambda(callable, guard),
+                              guard,
+                              std::forward<Policy>(policy),
+                              true);
 }
 
 template<signal_arg... Args>
@@ -1340,7 +1440,10 @@ auto emitter::signal<Args...>::connect(Result (Receiver::*callable)(MemberFuncti
                                        const Receiver& guard,
                                        Policy&& policy) const -> connection
 {
-    return connect(member_function_lambda(callable, guard), guard, std::forward<Policy>(policy));
+    return connect_with_guard(member_function_lambda(callable, guard),
+                              guard,
+                              std::forward<Policy>(policy),
+                              false);
 }
 
 template<signal_arg... Args>
@@ -1356,9 +1459,10 @@ auto emitter::signal<Args...>::connect_once(Result (Receiver::*callable)(MemberF
                                             const Receiver& guard,
                                             Policy&& policy) const -> connection
 {
-    return connect_once(member_function_lambda(callable, guard),
-                        guard,
-                        std::forward<Policy>(policy));
+    return connect_with_guard(member_function_lambda(callable, guard),
+                              guard,
+                              std::forward<Policy>(policy),
+                              true);
 }
 
 // ### connect class
