@@ -3,6 +3,7 @@
 
 #include <concepts>
 #include <cstddef>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -457,7 +458,10 @@ private:
 class emitter::connection_holder
 {
 public:
+    using exception_handler = std::function<void(std::exception_ptr)>;
+
     virtual ~connection_holder() = default;
+    virtual void add_exception_handler(emitter::connection_holder::exception_handler handler) = 0;
 
     virtual void disconnect() = 0;
     virtual void suspend() = 0;
@@ -508,6 +512,17 @@ public:
         }
 
         locked_holder->resume();
+    }
+
+    void add_exception_handler(emitter::connection_holder::exception_handler handler)
+    {
+        auto locked_holder { m_holder.lock() };
+        if (!locked_holder)
+        {
+            return;
+        }
+
+        locked_holder->add_exception_handler(std::move(handler));
     }
 
     auto operator==(emitter::connection_holder* holder) -> bool
@@ -1224,16 +1239,43 @@ public:
             disconnect();
         }
 
+        auto exception_handlers { copy_exception_handlers() };
         if (m_policy.is_synchronous())
         {
-            m_policy.execute([&] { m_slot(std::forward<EmittedArgs>(args)...); });
+            m_policy.execute([&]
+            { safe_execute(m_slot, exception_handlers, std::forward<EmittedArgs>(args)...); });
         }
         else
         {
             m_policy.execute(
-                [slot = m_slot,
+                [exception_handlers = copy_exception_handlers(),
+                 slot = m_slot,
                  ... args = ref_or_value<Args>(std::forward<EmittedArgs>(args))] mutable
-            { slot(std::forward<Args>(args)...); });
+            { safe_execute(slot, exception_handlers, std::forward<decltype(args)>(args)...); });
+        }
+    }
+
+    template<class... ExecuteArgs>
+    static void safe_execute(signal<Args...>::slot& slot,
+                             std::vector<exception_handler>& exception_handlers,
+                             ExecuteArgs&&... execute_args)
+    {
+        try
+        {
+            slot(std::forward<ExecuteArgs>(execute_args)...);
+        }
+        catch (...)
+        {
+            if (exception_handlers.empty())
+            {
+                throw;
+            }
+            auto current_exception { std::current_exception() };
+            for (auto& handler: exception_handlers)
+            {
+                // Exception handlers shouldn't throw. If they do, that's not on us.
+                handler(current_exception);
+            }
         }
     }
 
@@ -1258,7 +1300,20 @@ public:
         m_suspended = false;
     }
 
+    void add_exception_handler(emitter::connection_holder::exception_handler handler) override
+    {
+        std::lock_guard lock { m_mutex };
+        m_exception_handlers.emplace_back(std::move(handler));
+    }
+
 private:
+    auto copy_exception_handlers() const -> std::vector<exception_handler>
+    {
+        std::lock_guard lock { m_mutex };
+
+        return m_exception_handlers;
+    }
+
     template<partially_callable<Args...> Callable>
     static auto generate_slot(Callable&& callable)
     {
@@ -1267,6 +1322,8 @@ private:
     }
 
     signal::slot m_slot;
+    std::vector<exception_handler> m_exception_handlers;
+    mutable std::mutex m_mutex;
     const signal& m_signal;
     guard* m_guard { nullptr };
     execution_policy_holder m_policy;

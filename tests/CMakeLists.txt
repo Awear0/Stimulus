@@ -22,6 +22,7 @@ add_executable(tests
     test_chain.cpp
     test_guard.cpp
     test_threads.cpp
+    test_exceptions.cpp
 )
 
 target_link_libraries(tests
