@@ -148,6 +148,51 @@ protected:
 
         signal<int, std::string> m_signal;
     };
+
+    template<class... Args>
+    struct pipe_forwarding_emitter: public emitter
+    {
+        pipe_forwarding_emitter(const signal<Args...>& emitting_signal)
+        {
+            connect(emitting_signal | map<0>(), &pipe_forwarding_emitter::m_signal);
+        }
+
+        signal<Args...[0]> m_signal;
+    };
+
+    template<class... Args>
+    struct full_pipe_forwarding_emitter: public emitter
+    {
+        full_pipe_forwarding_emitter(const signal<Args...>& emitting_signal)
+        {
+            emitting_signal | map<0>() | connect(&full_pipe_forwarding_emitter::m_signal);
+        }
+
+        signal<Args...[0]> m_signal;
+    };
+
+    template<class... Args>
+    struct signal_pipe_signal_emitter: public emitter
+    {
+        signal_pipe_signal_emitter(const signal<Args...>& emitting_signal)
+        {
+            emitting_signal | connect(&signal_pipe_signal_emitter::m_signal);
+        }
+
+        signal<Args...[0]> m_signal;
+    };
+
+    template<class... Args>
+    struct signal_pipe_signal_chain_emitter: public emitter
+    {
+        signal_pipe_signal_chain_emitter(const signal<Args...>& emitting_signal)
+        {
+            auto chain { map<0>() | connect(&signal_pipe_signal_chain_emitter::m_signal) };
+            emitting_signal | chain;
+        }
+
+        signal<Args...[0]> m_signal;
+    };
 };
 
 TEST_F(test_forward_signal, same_empty_signal)
@@ -585,4 +630,88 @@ TEST_F(test_forward_signal, disconnect_on_receiver_destruction)
 
     empty_emitter.generic_emit();
     EXPECT_EQ(count, 0);
+}
+
+TEST_F(test_forward_signal, pipe_forwarding)
+{
+    int& count = call_count<int>;
+    reset<int>();
+
+    pipe_forwarding_emitter receiver(int_string_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<int>);
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(7, "7");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 1);
+    EXPECT_EQ(call_args<int>.back(), 7);
+
+    int_string_emitter.generic_emit(8, "8");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 2);
+    EXPECT_EQ(call_args<int>.back(), 8);
+}
+
+TEST_F(test_forward_signal, full_pipe_forwarding)
+{
+    int& count = call_count<int>;
+    reset<int>();
+
+    full_pipe_forwarding_emitter receiver(int_string_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<int>);
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(7, "7");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 1);
+    EXPECT_EQ(call_args<int>.back(), 7);
+
+    int_string_emitter.generic_emit(8, "8");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 2);
+    EXPECT_EQ(call_args<int>.back(), 8);
+}
+
+TEST_F(test_forward_signal, signal_pipe_signal)
+{
+    int& count = call_count<int>;
+    reset<int>();
+
+    signal_pipe_signal_emitter receiver(int_string_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<int>);
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(7, "7");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 1);
+    EXPECT_EQ(call_args<int>.back(), 7);
+
+    int_string_emitter.generic_emit(8, "8");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 2);
+    EXPECT_EQ(call_args<int>.back(), 8);
+}
+
+TEST_F(test_forward_signal, signal_pipe_signal_chain)
+{
+    int& count = call_count<int>;
+    reset<int>();
+
+    signal_pipe_signal_chain_emitter receiver(int_string_emitter.generic_signal);
+
+    receiver.m_signal.connect(slot_function<int>);
+    EXPECT_EQ(count, 0);
+
+    int_string_emitter.generic_emit(7, "7");
+    EXPECT_EQ(count, 1);
+    EXPECT_EQ(call_args<int>.size(), 1);
+    EXPECT_EQ(call_args<int>.back(), 7);
+
+    int_string_emitter.generic_emit(8, "8");
+    EXPECT_EQ(count, 2);
+    EXPECT_EQ(call_args<int>.size(), 2);
+    EXPECT_EQ(call_args<int>.back(), 8);
 }
