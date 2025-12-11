@@ -443,13 +443,13 @@ protected:
                       Policy&& policy = {}) -> connection;
 
     template<class Receiver, class MemberSignal, execution_policy Policy = synchronous_policy>
-    class connect_result;
+    class forward_result;
 
     template<class Receiver, signal_arg... ReceiverArgs, execution_policy Policy>
-    class connect_result<Receiver, signal<ReceiverArgs...> Receiver::*, Policy>
+    class forward_result<Receiver, signal<ReceiverArgs...> Receiver::*, Policy>
     {
     public:
-        connect_result(const Receiver& receiver,
+        forward_result(const Receiver& receiver,
                        signal<ReceiverArgs...> Receiver::* receiver_signal,
                        Policy&& policy,
                        bool connect_once):
@@ -473,10 +473,10 @@ protected:
     template<class Receiver,
              signal_arg... ReceiverArgs,
              execution_policy Policy = synchronous_policy>
-    auto connect(this const Receiver& self,
-                 signal<ReceiverArgs...> Receiver::* receiver_signal,
-                 Policy&& policy = {})
-        -> connect_result<Receiver, signal<ReceiverArgs...> Receiver::*, Policy>
+    auto forward_to(this const Receiver& self,
+                    signal<ReceiverArgs...> Receiver::* receiver_signal,
+                    Policy&& policy = {})
+        -> forward_result<Receiver, signal<ReceiverArgs...> Receiver::*, Policy>
     {
         return { self, receiver_signal, std::forward<Policy>(policy), false };
     }
@@ -484,10 +484,10 @@ protected:
     template<class Receiver,
              signal_arg... ReceiverArgs,
              execution_policy Policy = synchronous_policy>
-    auto connect_once(this const Receiver& self,
-                      signal<ReceiverArgs...> Receiver::* receiver_signal,
-                      Policy&& policy = {})
-        -> connect_result<Receiver, signal<ReceiverArgs...> Receiver::*, Policy>
+    auto forward_once_to(this const Receiver& self,
+                         signal<ReceiverArgs...> Receiver::* receiver_signal,
+                         Policy&& policy = {})
+        -> forward_result<Receiver, signal<ReceiverArgs...> Receiver::*, Policy>
     {
         return { self, receiver_signal, std::forward<Policy>(policy), true };
     }
@@ -529,7 +529,7 @@ public:
         requires partially_tuple_callable<std::function<void(ReceiverArgs...)>,
                                           typename std::remove_cvref_t<Self>::args>
     auto operator|(this Self&& self,
-                   const emitter::connect_result<Receiver,
+                   const emitter::forward_result<Receiver,
                                                  emitter::signal<ReceiverArgs...> Receiver::*,
                                                  Policy>& connect_result)
     {
@@ -735,7 +735,6 @@ public:
 
 // ### connectable
 
-// TODO AROSS:
 class connectable
 {
 public:
@@ -851,7 +850,6 @@ public:
 // ### Signal definition
 
 // TODO AROSS: Make connectable?
-// TODO AROSS: Signal forwarding to signal with pipe ( signal | connect(other_signal) )
 template<signal_arg... Args>
 class emitter::signal final: public source,
                              public guard
@@ -1044,7 +1042,7 @@ class chain<Chainable, emitter::signal<Args...> Receiver::*, void, Policy>
 {
 public:
     chain(Chainable&& chainable,
-          const emitter::connect_result<Receiver, emitter::signal<Args...> Receiver::*, Policy>&
+          const emitter::forward_result<Receiver, emitter::signal<Args...> Receiver::*, Policy>&
               connect_result):
         m_chainable { std::forward<Chainable>(chainable) },
         m_connect_result { std::move(connect_result) }
@@ -1059,7 +1057,7 @@ public:
 
 private:
     std::remove_cvref_t<Chainable> m_chainable;
-    emitter::connect_result<Receiver, emitter::signal<Args...> Receiver::*, Policy>
+    emitter::forward_result<Receiver, emitter::signal<Args...> Receiver::*, Policy>
         m_connect_result;
 };
 
@@ -1082,7 +1080,7 @@ public:
 
     template<class Self, class Receiver, signal_arg... ReceiverArgs, execution_policy Policy>
     auto operator|(this Self&& self,
-                   const emitter::connect_result<Receiver,
+                   const emitter::forward_result<Receiver,
                                                  emitter::signal<ReceiverArgs...> Receiver::*,
                                                  Policy>& connect_result)
         -> chain<Self, emitter::signal<ReceiverArgs...> Receiver::*, void, Policy>
@@ -1524,7 +1522,7 @@ auto emitter::connect_once(this const Receiver& self,
 
 template<class Receiver, signal_arg... ReceiverArgs, execution_policy Policy>
 template<source_like Source>
-auto emitter::connect_result<Receiver, emitter::signal<ReceiverArgs...> Receiver::*, Policy>::
+auto emitter::forward_result<Receiver, emitter::signal<ReceiverArgs...> Receiver::*, Policy>::
     create_connection(Source&& origin) const -> connection
 {
     if (m_connect_once)

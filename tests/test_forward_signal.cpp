@@ -165,7 +165,7 @@ protected:
     {
         full_pipe_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
-            emitting_signal | map<0>() | connect(&full_pipe_forwarding_emitter::m_signal);
+            emitting_signal | map<0>() | forward_to(&full_pipe_forwarding_emitter::m_signal);
         }
 
         signal<Args...[0]> m_signal;
@@ -176,7 +176,7 @@ protected:
     {
         signal_pipe_signal_emitter(const signal<Args...>& emitting_signal)
         {
-            emitting_signal | connect(&signal_pipe_signal_emitter::m_signal);
+            emitting_signal | forward_to(&signal_pipe_signal_emitter::m_signal);
         }
 
         signal<Args...[0]> m_signal;
@@ -187,7 +187,7 @@ protected:
     {
         signal_pipe_signal_chain_emitter(const signal<Args...>& emitting_signal)
         {
-            auto chain { map<0>() | connect(&signal_pipe_signal_chain_emitter::m_signal) };
+            auto chain { map<0>() | forward_to(&signal_pipe_signal_chain_emitter::m_signal) };
             emitting_signal | chain;
         }
 
