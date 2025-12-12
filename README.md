@@ -1,4 +1,4 @@
-# Sigslot library
+# Overview
 
 ## Quick description
 
@@ -9,7 +9,7 @@ It is a C++26 only library, and has only been tested with Clang 21.1.5 so far.
 
 Sigslot allows to add typed signal members to your own classes, and connect those signal to functions, lambdas, functors or method. Connections can be handled manually or automatically through scoped connections and guard classes instance.
 
-## Quick overview
+## Simple examples
 
 Sigslot allows to create Qt-style signal and connection:
 
@@ -192,9 +192,9 @@ auto main() -> int
 
 Many more features are available in Sigslot, such as suspend/resume on signals, signal forwarding, custom execution policies for slot execution in event loops, custom transformations, as well as thread-safety!
 
-## Features
+# Features
 
-### Signals
+## Signals
 
 Signals are the main features of Sigslot. In order for a class to have signal members, it must inherit `emitter`.
 
@@ -242,17 +242,17 @@ public:
 };
 ```
 
-#### Const correctness
+### Const correctness
 
 It must be noted that signals can be connected to and emitted even from a const class.
 
-#### Copy and move semantics
+### Copy and move semantics
 
 Signals have default copy/move constructor/assignment operators. The copy of a signal (and a moved signal) do not have any connections attached to it, even if the original signal had any.
 
 This is made to ensure that `emitter` inheriting classes can still have default constructors/assignment operators.
 
-### Connections
+## Connections
 
 Connections allow to associate a signal to any number of slots (any Callable object, as per defined by the named requirement: https://en.cppreference.com/w/cpp/named_req/Callable.html).
 
@@ -313,9 +313,9 @@ auto main() -> int
 
 Multiple connections can be made on a single signal.
 
-#### Connections handling
+### Connections handling
 
-##### connection class
+#### connection class
 
 A call to the connect method will create a connection object.
 
@@ -327,7 +327,7 @@ auto conn = c.int_signal.connect(function);
 
 Several methods are available on the connection class:
 
-###### disconnect
+##### disconnect
 
 A call to `disconnect` will render the existing connection invalid, meaning that emission of the
 signal won't trigger the call of the connected slot anymore.
@@ -337,7 +337,7 @@ This cannot be undone.
 conn.disconnect();
 ```
 
-###### suspend
+##### suspend
 
 This will move the connection to a suspended state. As long as a connection is suspended, any emission of the signal will be ignored.
 
@@ -345,7 +345,7 @@ This will move the connection to a suspended state. As long as a connection is s
 conn.suspend();
 ```
 
-###### resume
+##### resume
 
 A call to resume will move the connection to a normal state, therefore cancelling the suspended state: emissions will now properly trigger the associated slot.
 
@@ -353,7 +353,7 @@ A call to resume will move the connection to a normal state, therefore cancellin
 conn.resume();
 ```
 
-###### add_exception_handler
+##### add_exception_handler
 
 If a slot called throws an exception, this exception will be propagated by default. One (or many) exception handlers can be installed on a connection. Those handlers will be called with the current exception ; if an exception is handled by at least one exception handler, it won't be propagated.
 **One must ensure that exception handlers won't throw. If they do, this exception will be propagated to the calling context.**
@@ -384,11 +384,11 @@ conn.add_exception_handler(exception_handler);
 
 When a slot throws, all exceptions handler registered to the connection are called in the order they have been registered. There is no way to remove a registered exception handler.
 
-###### Copy and move semantics
+##### Copy and move semantics
 
 Connection can safely be copy/move constructed/assigned. All copies of a connection share the same underlying state, including their connected/disconnected status, suspended/resumed state, and registered exception handlers.
 
-##### scoped_connection class
+#### scoped_connection class
 
 A scoped_connection can be created from a connection object. A scoped connection will disconnect the connection when destructed.
 
@@ -407,11 +407,11 @@ Manual disconnect can be perfomed on a scoped connection:
 }
 ```
 
-###### Copy and move semantics
+##### Copy and move semantics
 
 A scoped_connection is move-only and cannot be copied.
 
-##### inhibitor class
+#### inhibitor class
 
 An inhibitor can be created from a connection object. Upon creation, the inhibitor will suspend the connection. The connection will be automatically resumed upon the inhibitor destruction.
 
@@ -425,19 +425,19 @@ An inhibitor can be created from a connection object. Upon creation, the inhibit
 }
 ```
 
-#### Slot return value
+### Slot return value
 
 Slots are not required to return void, but any return value will be ignored. There is no way for a signal to get the results of the slots it's connected to.
 
-#### Thread safety
+### Thread safety
 
 `connect`, `disconnect`, `add_exception_handler`, `suspend`, `resume` and `emit` functions are thread safe, even when called on the same connection or signal.
 
-#### Slot call policy
+### Slot call policy
 
 By default, all slots are called synchronously. Custom execution policy for slots can be specified (see: Custom execution policy section).
 
-#### Partial argument match
+### Partial argument match
 
 When connecting a slot to a signal, the connection is valid if the slot can be called with the parameters of the signal, **or can be called by dropping any number of parameters, starting from the end**.
 
@@ -480,7 +480,7 @@ auto main() -> int
 
 One must note that if multiple calls are valid (with multiple number of parameters), the one with the highest count of parameters will be picked.
 
-#### Argument conversion
+### Argument conversion
 
 Signal argument will be converted when possible before calling a slot:
 
@@ -507,7 +507,7 @@ auto main() -> int
 }
 ```
 
-##### Value to reference and reference to value conversion
+#### Value to reference and reference to value conversion
 
 If a signal emits a reference, it can be connected to a slot taking a reference, or a value (a copy will be perfomed in the later case).
 
@@ -573,11 +573,11 @@ auto main() -> int
 }
 ```
 
-#### Connection after signal destruction
+### Connection after signal destruction
 
 Connections are automatically disconnected when their source signal is destroyed.
 
-### Emitting
+## Emitting
 
 In order to call the slots connected to a signal, this signal must be emitted; signal parameters must be provided with each signal emission.
 Only the class owning the signal is allowed to emit it.
@@ -601,7 +601,7 @@ public:
 
 First, the signal must be passed to the emit function (in the form of a pointer to member parameter), then all the signal parameters.
 
-### Signal forwarding
+## Signal forwarding
 
 It is possible to connect a signal to another signal. In that case, the emission of the first signal will trigger the emission of the second one.
 The source signal parameters must match the destination signal parameters, potentially after applying partial parameter dropping and type conversions.
@@ -634,7 +634,7 @@ public:
 Only the class owning the signal is able to forward another signal to it.
 Connection is disconnected whenever the object owning the destination signal is destructed.
 
-### Guarding slots
+## Guarding slots
 
 In order to ensure that connections are automatically disconnected (and thus avoid dangling references), a guard mechanism exists.
 
@@ -722,11 +722,11 @@ auto main() -> int
 }
 ```
 
-#### Copy and move semantics
+### Copy and move semantics
 
 The `receiver` class has default copy/move constructor/assignment operator. Those methods are empty, and are just here to allow default copy/move operation on `receiver` inheriting classes. If a guard is destroyed after being copied/moved from, all the connections it's guarding will be invalid. A copy of a guard won't guard anything by default.
 
-### Signal transformation
+## Signal transformation
 
 Transformations can be applied to signal before connecting them to a slot. Transformations can have different effects : filtering, applying function to parameters, parameters re-ordering...
 
@@ -738,7 +738,7 @@ my_signal.apply(my_transformation).connect(my_slot);
 
 Parameters convertion and partial parameter dropping can still be applied to slot connected to a transformed signal.
 
-#### Pipe operator
+### Pipe operator
 
 Instead of the apply method, the pipe operator can be used for more expressive code:
 
@@ -746,9 +746,9 @@ Instead of the apply method, the pipe operator can be used for more expressive c
 my_signal | my_transformation | connect(my_slot);
 ```
 
-#### Available transformations
+### Available transformations
 
-##### map
+#### map
 
 map allows to re-order and drop parameters from a signal. map is a template class, templated over integers.
 The template parameters count is the parameters count of the resulting signal. Each value represent a 0-based index of the original signal.
@@ -787,7 +787,7 @@ auto main() -> int
 }
 ```
 
-##### transform
+#### transform
 
 transform allow to apply a function (transformation) to each parameter of the source signal before passing it to the slot. The transformation can modify the parameter type, as long as the slot can be called with the resulting type.
 If fewer transformations are passed than the amount of parameters in the source signal, the remaining parameters will be forwarded as is.
@@ -839,7 +839,7 @@ auto main() -> int
 }
 ```
 
-##### filter
+#### filter
 
 filter allows to call a slot only if a predicate is respected. The source signal parameters must match the predicate signal parameters, potentially after applying partial parameter dropping and type conversions. The resulting call must be convertible to a `bool`
 
@@ -874,7 +874,7 @@ auto main() -> int
 }
 ```
 
-#### Custom transformations
+### Custom transformations
 
 Custom transformations can be implemented.
 They must follow this pattern:
@@ -981,7 +981,7 @@ private:
 };
 ```
 
-#### Transformation chaining
+### Transformation chaining
 
 Transformations can be chained, by either chaining `apply()` calls, or chaining pipe operator calls.
 
@@ -1160,3 +1160,28 @@ auto main() -> int
     return 0;
 }
 ```
+
+## Custom execution policy
+
+By default, all connections are executed synchronously. However, custom execution policy can be implemented.
+To define a custom policy, a custom class must be created, containing the following features:
+    - a method `void execute(std::function<void()>)`: This method will be called each time a slot should be executed. The parameter is a std::function that, when called, will execute the slot with the appropriate parameters. This function can be executed directly, stored, or even executed on another thread.
+    - a static constexpr bool member named `is_synchronous`: The purpose of this member is to indicate whether the policy is synchronous or not. If the policy is synchronous, some optimization regarding parameters copy will be performed. If you're unsure, set this member to false.
+
+Exemple of a custom policy that simply stores all potential slot invocations, instead of calling them:
+
+```
+struct storing_policy
+{
+    void execute(std::function<void()> callable)
+    {
+        m_functions.emplace_back(std::move(callable));
+    }
+
+    static constexpr bool is_synchronous { false };
+
+    std::vector<std::function<void()>> m_functions;
+};
+```
+
+**With asynchronous policies, one must be careful about signal with reference parameters, and must ensure that all references will stay valid until each slot is executed.**
