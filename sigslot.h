@@ -1,7 +1,6 @@
 #ifndef SIGSLOT_H_
 #define SIGSLOT_H_
 
-#include <atomic>
 #include <concepts>
 #include <cstddef>
 #include <exception>
@@ -282,8 +281,13 @@ template<class Callable, class Tuple>
     requires partially_tuple_callable<Callable, Tuple>
 constexpr auto partial_tuple_call(Callable&& callable, Tuple&& tuple)
 {
-    auto&& [... args] { tuple };
-    return partial_call(std::forward<Callable>(callable), std::forward<decltype(args)>(args)...);
+    constexpr std::make_index_sequence<std::tuple_size_v<Tuple>> index_sequence {};
+    return []<std::size_t... Indexes>(const std::index_sequence<Indexes...>&,
+                                      Callable&& callable,
+                                      Tuple&& tuple)
+    {
+        return partial_call(std::forward<Callable>(callable), std::get<Indexes>(tuple)...);
+    }(index_sequence, std::forward<Callable>(callable), std::forward<Tuple>(tuple));
 }
 
 // ### Forward declaration
@@ -457,7 +461,7 @@ protected:
         }
 
         template<source_like Source>
-        auto create_connection(Source&& origin) const -> connection;
+        auto create_connection(Source&& origin) -> connection;
 
     private:
         const Receiver& m_receiver;
@@ -516,20 +520,40 @@ public:
         requires(callable_with_no_guard<Self, Callable, Guard> ||
                  callable_with_guard<Self, Callable, Guard> ||
                  method_with_guard<Self, Callable, Guard>)
-    auto operator|(this Self&& self, const connect<Callable, Guard, Policy>& connect)
+    auto operator|(this Self&& self, connect<Callable, Guard, Policy>& connect)
     {
         return connect.create_connection(std::forward<Self>(self));
+    }
+
+    template<source_like Self, class Callable, class Guard, execution_policy Policy>
+        requires(callable_with_no_guard<Self, Callable, Guard> ||
+                 callable_with_guard<Self, Callable, Guard> ||
+                 method_with_guard<Self, Callable, Guard>)
+    auto operator|(this Self&& self, connect<Callable, Guard, Policy>&& connect)
+    {
+        return std::move(connect).create_connection(std::forward<Self>(self));
     }
 
     template<source_like Self, class Receiver, signal_arg... ReceiverArgs, execution_policy Policy>
         requires partially_tuple_callable<std::function<void(ReceiverArgs...)>,
                                           typename std::remove_cvref_t<Self>::args>
-    auto operator|(this Self&& self,
-                   const emitter::forward_result<Receiver,
-                                                 emitter::signal<ReceiverArgs...> Receiver::*,
-                                                 Policy>& connect_result)
+    auto operator|(
+        this Self&& self,
+        emitter::forward_result<Receiver, emitter::signal<ReceiverArgs...> Receiver::*, Policy>&
+            connect_result)
     {
         return connect_result.create_connection(std::forward<Self>(self));
+    }
+
+    template<source_like Self, class Receiver, signal_arg... ReceiverArgs, execution_policy Policy>
+        requires partially_tuple_callable<std::function<void(ReceiverArgs...)>,
+                                          typename std::remove_cvref_t<Self>::args>
+    auto operator|(
+        this Self&& self,
+        emitter::forward_result<Receiver, emitter::signal<ReceiverArgs...> Receiver::*, Policy>&&
+            connect_result)
+    {
+        return std::move(connect_result).create_connection(std::forward<Self>(self));
     }
 };
 
@@ -958,7 +982,7 @@ private:
     static auto member_function_lambda(MemberFunction member_function, Receiver& guard)
     {
         return [&guard, member_function]<class... CallArgs>(CallArgs&&... args) mutable
-        { (guard.*member_function)(std::forward<CallArgs>(args)...); };
+        { partial_call(member_function, guard, std::forward<CallArgs>(args)...); };
     }
 
     template<class... EmittedArgs>
@@ -1224,10 +1248,16 @@ private:
     {
         static constexpr std::make_index_sequence<sizeof...(Transformations)> index_sequence {};
         return [callable = std::forward<Callable>(callable),
-                transformations_tuple = m_transformations]<class... Args>(Args&&... args) mutable
+                transformations = m_transformations]<class... Args>(Args&&... args) mutable
         {
-            auto& [... transformations] { transformations_tuple };
-            partial_call(callable, std::invoke(transformations, std::forward<Args>(args))...);
+            return [&callable, &transformations]<std::size_t... Indexes>(
+                       const std::index_sequence<Indexes...>&,
+                       Args&&... args) mutable
+            {
+                return partial_call(
+                    callable,
+                    std::get<Indexes>(transformations)(std::forward<Args>(args))...);
+            }(index_sequence, std::forward<Args>(args)...);
         };
     }
 
@@ -1379,7 +1409,7 @@ public:
         requires std::invocable<signal::slot, EmittedArgs...>
     void operator()(EmittedArgs&&... args)
     {
-        if (m_suspended.load(std::memory_order_relaxed))
+        if (m_suspended)
         {
             return;
         }
@@ -1441,12 +1471,12 @@ public:
 
     void suspend() override
     {
-        m_suspended.store(true, std::memory_order_relaxed);
+        m_suspended = true;
     }
 
     void resume() override
     {
-        m_suspended.store(false, std::memory_order_relaxed);
+        m_suspended = false;
     }
 
     void add_exception_handler(emitter::connection_holder::exception_handler handler) override
@@ -1476,7 +1506,7 @@ private:
     const signal& m_signal;
     guard* m_guard { nullptr };
     execution_policy_holder m_policy;
-    std::atomic<bool> m_suspended { false };
+    bool m_suspended { false };
     bool m_single_shot;
 };
 
@@ -1513,7 +1543,7 @@ auto emitter::connect_once(this const Receiver& self,
 template<class Receiver, signal_arg... ReceiverArgs, execution_policy Policy>
 template<source_like Source>
 auto emitter::forward_result<Receiver, emitter::signal<ReceiverArgs...> Receiver::*, Policy>::
-    create_connection(Source&& origin) const -> connection
+    create_connection(Source&& origin) -> connection
 {
     if (m_connect_once)
     {
@@ -1696,7 +1726,7 @@ public:
     }
 
     template<source_like Source>
-    auto create_connection(Source&& origin) const -> connection
+    auto create_connection(Source&& origin) -> connection
     {
         return origin.connect(m_callable, m_policy);
     }
@@ -1719,7 +1749,7 @@ public:
     }
 
     template<source_like Source>
-    auto create_connection(Source&& origin) const -> connection
+    auto create_connection(Source&& origin) -> connection
     {
         return origin.connect(m_callable, m_guard, m_policy);
     }
@@ -1743,7 +1773,7 @@ public:
     }
 
     template<source_like Source>
-    auto create_connection(Source&& origin) const -> connection
+    auto create_connection(Source&& origin) -> connection
     {
         return origin.connect(m_callable, m_guard, m_policy);
     }
@@ -1767,7 +1797,7 @@ public:
     }
 
     template<source_like Source>
-    auto create_connection(Source&& origin) const -> connection
+    auto create_connection(Source&& origin) -> connection
     {
         return origin.connect(m_callable, m_guard, m_policy);
     }

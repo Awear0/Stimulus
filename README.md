@@ -317,13 +317,15 @@ Multiple connections can be made on a single signal.
 
 #### connection class
 
-A call to the connect method will create a connection object.
+A call to the `connect` method will create a `connection` object.
 
 ```
 connection conn = c.int_signal.connect(function);
 // or
 auto conn = c.int_signal.connect(function);
 ```
+
+The `connect_once` method is similar to the `connect` one, except that the slot is only executed once.
 
 Several methods are available on the connection class:
 
@@ -633,6 +635,33 @@ public:
 
 Only the class owning the signal is able to forward another signal to it.
 Connection is disconnected whenever the object owning the destination signal is destructed.
+
+### operator pipe and signal forwarding
+
+The operator pipe (see later) can be used with signal forwarding using the following syntax:
+
+```
+class my_class: public emitter
+{
+public:
+    signal<int> int_signal1;
+    signal<int> int_signal2;
+    signal<double> double_signal;
+    signal<> empty_signal;
+
+    my_class()
+    {
+        // Int to int, valid
+        int_signal1 | forward_to(&my_class::int_signal2);
+
+        // Int to double, valid (a conversion is performed)
+        int_signal1 | forward_to(&my_class::double_signal);
+
+        // Into nothing, valid (the int parameter is dropped).
+        int_signal1 | forward_to(&my_class::empty_signal);
+    }
+};
+```
 
 ## Guarding slots
 
@@ -1182,6 +1211,41 @@ struct storing_policy
 
     std::vector<std::function<void()>> m_functions;
 };
+```
+
+Usage:
+
+```
+storing_policy policy {};
+
+class my_emitter: public emitter
+{
+public:
+    signal<int, std::string> int_string_signal;
+
+    void emit_signal()
+    {
+        emit(&my_emitter::int_string_signal, 5, "test");
+    }
+};
+
+auto main() -> int
+{
+    my_emitter e;
+
+    e.int_string_signal.apply(filter([](int value, std::string text)
+    {
+        return value > 4 && text == "test";
+    })).connect(print, policy);
+
+    // Works as well!
+    e.int_string_signal | filter([](int value)
+    {
+        return value > 3;
+    }) | connect(print, policy);
+
+    return 0;
+}
 ```
 
 **With asynchronous policies, one must be careful about signal with reference parameters, and must ensure that all references will stay valid until each slot is executed.**
