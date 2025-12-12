@@ -431,7 +431,7 @@ Slots are not required to return void, but any return value will be ignored. The
 
 #### Thread safety
 
-`connect`, `disconnect`, `add_exception_handler` and `emit` functions are thread safe, even when called on the same connection or signal.
+`connect`, `disconnect`, `add_exception_handler`, `suspend`, `resume` and `emit` functions are thread safe, even when called on the same connection or signal.
 
 #### Slot call policy
 
@@ -575,4 +575,149 @@ auto main() -> int
 
 #### Connection after signal destruction
 
-Connection are automatically disconnected when their source signal is destroyed.
+Connections are automatically disconnected when their source signal is destroyed.
+
+### Emitting
+
+In order to call the slots connected to a signal, this signal must be emitted; signal parameters must be provided with each signal emission.
+Only the class owning the signal is allowed to emit it.
+
+During an emission, slots are called in the order they were registered.
+
+To emit a signal, one must use the following syntax:
+
+```
+class my_class: public emitter
+{
+public:
+    signal<int> int_signal;
+
+    void emitting_function()
+    {
+        emit(&my_class::int_signal, 5);
+    }
+};
+```
+
+First, the signal must be passed to the emit function (in the form of a pointer to member parameter), then all the signal parameters.
+
+### Signal forwarding
+
+It is possible to connect a signal to another signal. In that case, the emission of the first signal will trigger the emission of the second one.
+The source signal parameters must match the destination signal parameters, potentially after applying partial parameter dropping and type conversions.
+
+This must be done using the following syntax:
+
+```
+class my_class: public emitter
+{
+public:
+    signal<int> int_signal1;
+    signal<int> int_signal2;
+    signal<double> double_signal;
+    signal<> empty_signal;
+
+    my_class()
+    {
+        // Int to int, valid
+        connect(int_signal1, &my_class::int_signal2);
+
+        // Int to double, valid (a conversion is performed)
+        connect(int_signal1, &my_class::double_signal);
+
+        // Into nothing, valid (the int parameter is dropped).
+        connect(int_signal1, &my_class::empty_signal);
+    }
+};
+```
+
+Only the class owning the signal is able to forward another signal to it.
+Connection is disconnected whenever the object owning the destination signal is destructed.
+
+### Guarding slots
+
+In order to ensure that connections are automatically disconnected (and thus avoid dangling references), a guard mechanism exists.
+
+This mechanism is implemented through the `receiver` class, which can be inherited from.
+Any receiver inheriting object can be passed as a parameter of a connect call and act as a guard: the created connection will be automatically disconnected upon the guard destruction.
+
+```
+class my_emitter: public emitter
+{
+public:
+    signal<int> int_signal;
+
+    void emit_signal()
+    {
+        emit(&my_emitter::int_signal, 5);
+    }
+};
+
+class my_receiver: public receiver
+{
+};
+
+auto main() -> int
+{
+    my_emitter e;
+
+    {
+        my_receiver r;
+
+        // Empty slot connection, with r as guard
+        e.int_signal.connect([]{}, r);
+
+        // Slot called
+        e.emit_signal();
+    }
+
+    // Our guard r is now destroyed, the connection isn't valid anymore, nothing happens.
+    e.emit_signal();
+
+    return 0;
+}
+```
+
+Method of a guard can also be used as slots, effectively calling the method on the guard object when the slot is called.
+
+```
+class my_emitter: public emitter
+{
+public:
+    signal<int> int_signal;
+
+    void emit_signal()
+    {
+        emit(&my_emitter::int_signal, 5);
+    }
+};
+
+class my_receiver: public receiver
+{
+public:
+    void empty_function()
+    {
+
+    }
+};
+
+auto main() -> int
+{
+    my_emitter e;
+
+    {
+        my_receiver r;
+
+        // Empty slot connection, with r as guard
+        e.int_signal.connect(&my_receiver::empty_function, r);
+
+        // Slot called
+        e.emit_signal();
+    }
+
+    // Our guard r is now destroyed, the connection isn't valid anymore, nothing happens.
+    e.emit_signal();
+
+    return 0;
+}
+```

@@ -1,6 +1,7 @@
 #ifndef SIGSLOT_H_
 #define SIGSLOT_H_
 
+#include <atomic>
 #include <concepts>
 #include <cstddef>
 #include <exception>
@@ -281,13 +282,8 @@ template<class Callable, class Tuple>
     requires partially_tuple_callable<Callable, Tuple>
 constexpr auto partial_tuple_call(Callable&& callable, Tuple&& tuple)
 {
-    constexpr std::make_index_sequence<std::tuple_size_v<Tuple>> index_sequence {};
-    return []<std::size_t... Indexes>(const std::index_sequence<Indexes...>&,
-                                      Callable&& callable,
-                                      Tuple&& tuple)
-    {
-        return partial_call(std::forward<Callable>(callable), std::get<Indexes>(tuple)...);
-    }(index_sequence, std::forward<Callable>(callable), std::forward<Tuple>(tuple));
+    auto&& [... args] { tuple };
+    return partial_call(std::forward<Callable>(callable), std::forward<decltype(args)>(args)...);
 }
 
 // ### Forward declaration
@@ -1228,16 +1224,10 @@ private:
     {
         static constexpr std::make_index_sequence<sizeof...(Transformations)> index_sequence {};
         return [callable = std::forward<Callable>(callable),
-                transformations = m_transformations]<class... Args>(Args&&... args) mutable
+                transformations_tuple = m_transformations]<class... Args>(Args&&... args) mutable
         {
-            return [&callable, &transformations]<std::size_t... Indexes>(
-                       const std::index_sequence<Indexes...>&,
-                       Args&&... args) mutable
-            {
-                return partial_call(
-                    callable,
-                    std::get<Indexes>(transformations)(std::forward<Args>(args))...);
-            }(index_sequence, std::forward<Args>(args)...);
+            auto& [... transformations] { transformations_tuple };
+            partial_call(callable, std::invoke(transformations, std::forward<Args>(args))...);
         };
     }
 
@@ -1389,7 +1379,7 @@ public:
         requires std::invocable<signal::slot, EmittedArgs...>
     void operator()(EmittedArgs&&... args)
     {
-        if (m_suspended)
+        if (m_suspended.load(std::memory_order_relaxed))
         {
             return;
         }
@@ -1451,12 +1441,12 @@ public:
 
     void suspend() override
     {
-        m_suspended = true;
+        m_suspended.store(true, std::memory_order_relaxed);
     }
 
     void resume() override
     {
-        m_suspended = false;
+        m_suspended.store(false, std::memory_order_relaxed);
     }
 
     void add_exception_handler(emitter::connection_holder::exception_handler handler) override
@@ -1486,7 +1476,7 @@ private:
     const signal& m_signal;
     guard* m_guard { nullptr };
     execution_policy_holder m_policy;
-    bool m_suspended { false };
+    std::atomic<bool> m_suspended { false };
     bool m_single_shot;
 };
 
