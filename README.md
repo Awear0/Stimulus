@@ -678,7 +678,7 @@ auto main() -> int
 }
 ```
 
-Method of a guard can also be used as slots, effectively calling the method on the guard object when the slot is called.
+Methods of a guard can also be used as slots, effectively calling the method on the guard object when the slot is called.
 
 ```
 class my_emitter: public emitter
@@ -718,6 +718,445 @@ auto main() -> int
     // Our guard r is now destroyed, the connection isn't valid anymore, nothing happens.
     e.emit_signal();
 
+    return 0;
+}
+```
+
+#### Copy and move semantics
+
+The `receiver` class has default copy/move constructor/assignment operator. Those methods are empty, and are just here to allow default copy/move operation on `receiver` inheriting classes. If a guard is destroyed after being copied/moved from, all the connections it's guarding will be invalid. A copy of a guard won't guard anything by default.
+
+### Signal transformation
+
+Transformations can be applied to signal before connecting them to a slot. Transformations can have different effects : filtering, applying function to parameters, parameters re-ordering...
+
+In order to apply a transformation before connecting a slot to it, one must use the following syntax:
+
+```
+my_signal.apply(my_transformation).connect(my_slot);
+```
+
+Parameters convertion and partial parameter dropping can still be applied to slot connected to a transformed signal.
+
+#### Pipe operator
+
+Instead of the apply method, the pipe operator can be used for more expressive code:
+
+```
+my_signal | my_transformation | connect(my_slot);
+```
+
+#### Available transformations
+
+##### map
+
+map allows to re-order and drop parameters from a signal. map is a template class, templated over integers.
+The template parameters count is the parameters count of the resulting signal. Each value represent a 0-based index of the original signal.
+Eg: if you have a `signal<int, std::string>`, using map<1, 0> will generate the equivalent of a `signal<std::string, int>` (1 is the second parameter of the source: std::string, and 0 is the first parameter of the source: int). Parameters can be dropped that way (ex: `signal<int, std::string>` with map<1> will produce the equivalent of a `signal<std::string>`).
+Parameters cannot be duplicated that way (map<0, 0> is invalid, because 0 appears twice), and values must be in range of the count of the source signal parameter (ex: map<2> would be invalid, and won't compile, with a `signal<int, char>`).
+
+```
+class my_emitter: public emitter
+{
+public:
+    signal<int, std::string> int_string_signal;
+
+    void emit_signal()
+    {
+        emit(&my_emitter::int_string_signal, 5, "test");
+    }
+};
+
+void print(std::string text)
+{
+    std::cout << text << std::endl;
+}
+
+auto main() -> int
+{
+    my_emitter e;
+
+    e.int_string_signal.apply(map<1>{}).connect(print);
+    // This works as well!
+    e.int_string_signal | map<1>{} | connect(print);
+
+    // Slot with no parameter work too!
+    e.int_string_signal | map<1>{} | connect([]{});
+
+    return 0;
+}
+```
+
+##### transform
+
+transform allow to apply a function (transformation) to each parameter of the source signal before passing it to the slot. The transformation can modify the parameter type, as long as the slot can be called with the resulting type.
+If fewer transformations are passed than the amount of parameters in the source signal, the remaining parameters will be forwarded as is.
+`std::identity` can be used as a transformation that doesn't modify the parameter.
+
+```
+class my_emitter: public emitter
+{
+public:
+    signal<int, std::string> int_string_signal;
+
+    void emit_signal()
+    {
+        emit(&my_emitter::int_string_signal, 5, "test");
+    }
+};
+
+auto to_string(int value) -> std::string
+{
+    return to_string(value);
+}
+
+auto to_int(std::string text) -> int
+{
+    return 42;
+}
+
+void print(std::string text)
+{
+    std::cout << text << std::endl;
+}
+
+auto main() -> int
+{
+    my_emitter e;
+
+    // Creating a signal<std::string, int>.
+    e.int_string_signal.apply(transform{ to_string, to_int }).connect(print);
+    // This works as well!
+    e.int_string_signal | transform{ to_string, to_int } | connect(print);
+
+    // Fewer transformation than parameters (creating a signal<std::string, std::string>)
+    e.int_string_signal | transform{ to_string } | connect(print);
+
+    // Using std::identity
+    e.int_string_signal | transform{ std::identity{}, to_int } | connect([](int, int){});
+
+    return 0;
+}
+```
+
+##### filter
+
+filter allows to call a slot only if a predicate is respected. The source signal parameters must match the predicate signal parameters, potentially after applying partial parameter dropping and type conversions. The resulting call must be convertible to a `bool`
+
+```
+class my_emitter: public emitter
+{
+public:
+    signal<int, std::string> int_string_signal;
+
+    void emit_signal()
+    {
+        emit(&my_emitter::int_string_signal, 5, "test");
+    }
+};
+
+auto main() -> int
+{
+    my_emitter e;
+
+    e.int_string_signal.apply(filter([](int value, std::string text)
+    {
+        return value > 4 && text == "test";
+    })).connect(print);
+
+    // Works as well!
+    e.int_string_signal | filter([](int value)
+    {
+        return value > 3;
+    }) | connect(print);
+
+    return 0;
+}
+```
+
+#### Custom transformations
+
+Custom transformations can be implemented.
+They must follow this pattern:
+
+```
+class my_transformation: public chainable
+{
+public:
+    template<source_like Source>
+    auto accept(Source&& origin) -> transformation_result<Source>
+    {
+        return { std::forward<Source>(origin) };
+    }
+};
+```
+
+and the resulting type of the accept call must follow this pattern:
+
+```
+template<source_like Source>
+class transformation_result: public source,
+                        public connectable
+{
+public:
+    friend connectable;
+
+    using args =
+        typename std::remove_cvref_t<Source>::args;
+
+    transformation_result(Source&& origin):
+        m_source { std::forward<Source>(origin) }
+    {
+    }
+
+private:
+    template<partially_tuple_callable<
+        typename std::remove_cvref_t<Source>::args> Callable>
+    auto forwarding_lambda(Callable&& callable) const
+    {
+        return [callable = std::forward<Callable>(callable)]<class... Args>(Args&&... args) mutable
+        {
+            partial_call(callable, args...);
+        };
+    }
+
+    Source m_source;
+};
+```
+
+The resulting type must:
+    - inherits source and connectable;
+    - have an args public alias that is a tuple of the resulting signal parameters
+    - have a method accessible to connectable named `forwarding lambda` that must take a Callable appliable to the transformed signal, and return a Callable accepting the input signal parameters, and applying the transformation of the signal.
+
+Here's an example of a custom transformation that takes a signal, and return a signal that only has one parameter: the last parameter of the input signal.
+
+```
+class only_last_parameter: public chainable
+{
+public:
+    template<source_like Source>
+    auto accept(Source&& origin) -> only_last_parameter_result<Source>
+    {
+        return { std::forward<Source>(origin) };
+    }
+};
+```
+
+```
+template<source_like Source>
+    // Ensures there is at least on parameter in the input signal
+    requires (std::tuple_size_v<typename std::remove_cvref_t<Source>::args> > 0)
+class only_last_parameter_result: public source,
+                        public connectable
+{
+public:
+    friend connectable;
+
+    // Alias to simplify code. Represent the input signal parameters.
+    using input_tuple = typename std::remove_cvref_t<Source>::args;
+
+    // Resulting parameters: only the last element of the input parameters.
+    using args =
+        std::tuple<std::tuple_element_t<std::tuple_size_v<input_tuple> - 1, input_tuple>>;
+
+    only_last_parameter_result(Source&& origin):
+        m_source { std::forward<Source>(origin) }
+    {
+    }
+
+private:
+    // forwarding_lambda
+    template<partially_tuple_callable<args> Callable>
+    auto forwarding_lambda(Callable&& callable) const
+    {
+        return [callable = std::forward<Callable>(callable)]<class... Args>(Args&&... args) mutable
+        {
+            // Only calls Callable with the last parameter.
+            partial_call(callable, std::forward<Args...[sizeof...(Args) - 1]>(args...[sizeof...(Args) - 1]));
+        };
+    }
+
+    Source m_source;
+};
+```
+
+#### Transformation chaining
+
+Transformations can be chained, by either chaining `apply()` calls, or chaining pipe operator calls.
+
+```
+#include <iostream>
+
+class thermometer: public emitter
+{
+public:
+    // Signal producing a double
+    signal<double> temperature_changed;
+
+    // Setter emitting previous signal
+    void set_temperature(double value)
+    {
+        emit(&thermometer::temperature_changed, value);
+    }
+};
+
+class temperature_printer: public receiver
+{
+public:
+    // Slots are simply methods
+    void print_temperature(std::string text)
+    {
+        std::cout << text << std::endl;
+    }
+};
+
+double celsius_to_kelvin(double value)
+{
+    return value + 273.15;
+}
+
+template<class T>
+struct greater_than
+{
+    greater_than(T value):
+        m_value { value }
+    {
+
+    }
+
+    auto operator()(T value) const -> bool
+    {
+        return value > m_value;
+    }
+
+    T m_value;
+};
+
+auto main() -> int
+{
+    double threshold { 50.0 };
+
+    auto to_string
+    {
+        [](double value)
+        {
+            return std::to_string(value);
+        }
+    };
+
+    thermometer t;
+
+    temperature_printer p;
+
+    // Connecting to a slot, after transforming the signal
+    t.temperature_changed
+        // Only emit if temperature is greater than threshold
+        // The functor greater_than is used here for readability, but could be replaced by a lambda
+        | filter(greater_than(threshold))
+        // Convert to Kelvin
+        | transform(celsius_to_kelvin)
+        // Make it a string
+        | transform(to_string)
+        // Print it!
+        | connect(&temperature_printer::print_temperature, p);
+    
+    // Doesn't print anything: it's not greater than threshold!
+    t.set_temperature(5.0);
+
+    // Print 373.15!
+    t.set_temperature(100.0);
+
+    return 0;
+}
+```
+
+Chains can be saved and applied to multiple signals:
+
+```
+#include <iostream>
+
+class thermometer: public emitter
+{
+public:
+    // Signal producing a double
+    signal<double> temperature_changed;
+
+    // Setter emitting previous signal
+    void set_temperature(double value)
+    {
+        emit(&thermometer::temperature_changed, value);
+    }
+};
+
+class temperature_printer: public receiver
+{
+public:
+    // Slots are simply methods
+    void print_temperature(std::string text)
+    {
+        std::cout << text << std::endl;
+    }
+};
+
+double celsius_to_kelvin(double value)
+{
+    return value + 273.15;
+}
+
+template<class T>
+struct greater_than
+{
+    greater_than(T value):
+        m_value { value }
+    {
+
+    }
+
+    auto operator()(T value) const -> bool
+    {
+        return value > m_value;
+    }
+
+    T m_value;
+};
+
+auto main() -> int
+{
+    double threshold { 50.0 };
+
+    auto to_string
+    {
+        [](double value)
+        {
+            return std::to_string(value);
+        }
+    };
+
+    thermometer t;
+    thermometer t2;
+
+    temperature_printer p;
+
+    auto chain 
+    {
+        // Only emit if temperature is greater than threshold
+        // The functor greater_than is used here for readability, but could be replaced by a lambda
+        filter(greater_than(threshold))
+        // Convert to Kelvin
+        | transform(celsius_to_kelvin)
+        // Make it a string
+        | transform(to_string)
+        // Print it!
+        | connect(&temperature_printer::print_temperature, p);
+    };
+
+    t.temperature_changed
+        | chain;
+
+    t2.temperature_changed
+        | chain;
+    
     return 0;
 }
 ```
