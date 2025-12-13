@@ -22,7 +22,7 @@ protected:
     generic_emitter<copy_move_counter> copy_move_emitter;
     generic_emitter<int&> int_ref_emitter;
 
-    template<signal_arg... Args>
+    template<details::signal_arg... Args>
     struct forwarding_emitter: public emitter
     {
         forwarding_emitter(const signal<Args...>& emitting_signal)

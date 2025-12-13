@@ -25,7 +25,7 @@ struct copy_move_counter
     }
 };
 
-template<not_void... Args>
+template<details::not_void... Args>
 class generic_emitter: public emitter
 {
 public:
