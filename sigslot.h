@@ -275,16 +275,333 @@ namespace details
                             std::forward<decltype(args)>(args)...);
     }
 
+    template<class BasicLockable>
+    concept basic_lockable = requires(BasicLockable lockable) {
+        { lockable.lock() };
+        { lockable.unlock() };
+    };
+
+    class fake_mutex
+    {
+    public:
+        constexpr void lock()
+        {
+        }
+
+        constexpr void unlock()
+        {
+        }
+    };
+
+    template<template<class> class PointerLike>
+    concept shared_pointer_like = requires(PointerLike<int> pointer) {
+        { *pointer } -> std::same_as<int&>;
+        { pointer = PointerLike<int> {} } -> std::same_as<PointerLike<int>&>;
+        { pointer == nullptr } -> std::convertible_to<bool>;
+        { pointer == PointerLike<int> {} } -> std::convertible_to<bool>;
+        { static_cast<bool>(pointer) };
+        { PointerLike<int> { pointer } } -> std::same_as<PointerLike<int>>;
+        { PointerLike<int> { std::move(pointer) } } -> std::same_as<PointerLike<int>>;
+        { PointerLike<int> {} } -> std::same_as<PointerLike<int>>;
+        { pointer.~PointerLike<int>() };
+        requires not_void<typename PointerLike<int>::weak_type>;
+        { pointer.get() } -> std::same_as<int*>;
+    };
+
+    template<class T>
+    class unsafe_weak_pointer;
+
+    template<class T>
+    class unsafe_shared_pointer
+    {
+    public:
+        friend class unsafe_weak_pointer<T>;
+
+        template<class>
+        friend class unsafe_shared_pointer;
+
+        using weak_type = unsafe_weak_pointer<T>;
+
+        unsafe_shared_pointer() = default;
+
+        explicit unsafe_shared_pointer(std::nullptr_t)
+        {
+        }
+
+        explicit unsafe_shared_pointer(T* pointer):
+            m_holder {
+                new pointer_holder { .pointer = pointer, .count = 1 }
+        }
+        {
+        }
+
+        unsafe_shared_pointer(const unsafe_shared_pointer& other):
+            m_holder { other.m_holder }
+        {
+            increase();
+        }
+
+        unsafe_shared_pointer(unsafe_shared_pointer&& other) noexcept
+        {
+            std::swap(m_holder, other.m_holder);
+        }
+
+        auto operator=(const unsafe_shared_pointer& other) -> unsafe_shared_pointer&
+        {
+            if (&other == this)
+            {
+                return *this;
+            }
+
+            release();
+
+            m_holder = other.m_holder;
+
+            increase();
+            return *this;
+        }
+
+        auto operator=(unsafe_shared_pointer&& other) noexcept -> unsafe_shared_pointer&
+        {
+            if (&other == this)
+            {
+                return *this;
+            }
+
+            release();
+
+            m_holder = std::move(other.m_holder);
+            other.m_holder = nullptr;
+
+            return *this;
+        }
+
+        ~unsafe_shared_pointer()
+        {
+            release();
+        }
+
+        auto operator==(T* other) const -> bool
+        {
+            if (other == nullptr)
+            {
+                return m_holder == nullptr;
+            }
+
+            if (m_holder == nullptr)
+            {
+                return false;
+            }
+
+            return other == m_holder->pointer;
+        }
+
+        auto operator==(const unsafe_shared_pointer& other) const -> bool
+        {
+            return other.m_holder == m_holder;
+        }
+
+        auto operator==(std::nullptr_t) const -> bool
+        {
+            return m_holder == nullptr || m_holder->pointer == nullptr;
+        }
+
+        auto operator*() const -> T&
+        {
+            return *m_holder->pointer;
+        }
+
+        auto get() const -> T*
+        {
+            if (m_holder == nullptr)
+            {
+                return nullptr;
+            }
+
+            return m_holder->pointer;
+        }
+
+        auto operator->() const -> T*
+        {
+            return get();
+        }
+
+        explicit operator bool() const
+        {
+            return m_holder != nullptr && m_holder->pointer != nullptr;
+        }
+
+        template<class Base>
+            requires std::derived_from<T, Base>
+        explicit operator unsafe_shared_pointer<Base>()
+        {
+            // TODO AROSS
+            return unsafe_shared_pointer<Base> {
+                reinterpret_cast<unsafe_shared_pointer<Base>::pointer_holder*>(m_holder)
+            };
+        }
+
+        template<class Base>
+            requires std::derived_from<T, Base>
+        explicit operator unsafe_weak_pointer<Base>()
+        {
+            // TODO AROSS
+            return unsafe_weak_pointer<Base> { unsafe_shared_pointer<Base> {
+                reinterpret_cast<unsafe_shared_pointer<Base>::pointer_holder*>(m_holder) } };
+        }
+
+    private:
+        void increase()
+        {
+            if (m_holder)
+            {
+                ++m_holder->count;
+            }
+        }
+
+        void release()
+        {
+            if (m_holder == nullptr)
+            {
+                return;
+            }
+
+            --m_holder->count;
+            if (m_holder->count == 0)
+            {
+                delete m_holder->pointer;
+                m_holder->pointer = nullptr;
+
+                if (m_holder->weak_count == 0)
+                {
+                    delete m_holder;
+                    m_holder = nullptr;
+                }
+            }
+        }
+
+        struct pointer_holder
+        {
+            T* pointer { nullptr };
+            std::size_t count { 0 };
+            std::size_t weak_count { 0 };
+        };
+
+        explicit unsafe_shared_pointer(pointer_holder* holder):
+            m_holder { holder }
+        {
+            increase();
+        }
+
+        pointer_holder* m_holder { nullptr };
+    };
+
+    template<class T>
+    class unsafe_weak_pointer
+    {
+    public:
+        unsafe_weak_pointer() = default;
+
+        explicit unsafe_weak_pointer(unsafe_shared_pointer<T> shared_pointer):
+            m_holder { shared_pointer.m_holder }
+        {
+            increase();
+        }
+
+        unsafe_weak_pointer(const unsafe_weak_pointer& other):
+            m_holder { other.m_holder }
+        {
+            increase();
+        }
+
+        unsafe_weak_pointer(unsafe_weak_pointer&& other) noexcept
+        {
+            std::swap(m_holder, other.m_holder);
+        }
+
+        auto operator=(const unsafe_weak_pointer& other) -> unsafe_weak_pointer&
+        {
+            release();
+
+            m_holder = other.m_holder;
+
+            increase();
+
+            return *this;
+        }
+
+        auto operator=(unsafe_weak_pointer&& other) noexcept -> unsafe_weak_pointer&
+        {
+            std::swap(m_holder, other.m_holder);
+
+            other.m_holder = nullptr;
+
+            return *this;
+        }
+
+        ~unsafe_weak_pointer()
+        {
+            release();
+        }
+
+        auto lock() const -> unsafe_shared_pointer<T>
+        {
+            return unsafe_shared_pointer<T> { m_holder };
+        }
+
+    private:
+        void increase()
+        {
+            if (m_holder)
+            {
+                ++m_holder->weak_count;
+            }
+        }
+
+        void release()
+        {
+            if (m_holder == nullptr)
+            {
+                return;
+            }
+
+            --m_holder->weak_count;
+            if (m_holder->weak_count == 0 && m_holder->count == 0)
+            {
+                delete m_holder;
+                m_holder = nullptr;
+            }
+        }
+
+        unsafe_shared_pointer<T>::pointer_holder* m_holder { nullptr };
+    };
+
 } // namespace details
 
 // ### Forward declaration
 
+template<template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 class connection;
+template<template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
+class scoped_connection;
+template<details::basic_lockable Mutex = details::fake_mutex,
+         template<class> class SharedPointer = details::unsafe_shared_pointer>
+    requires details::shared_pointer_like<SharedPointer>
 class receiver;
+
+template<class Guard>
+concept guard_like = requires(Guard guard_instance) {
+    []<details::basic_lockable Mutex, template<class> class SharedPointer>(
+        const receiver<Mutex, SharedPointer>&)
+        requires details::shared_pointer_like<SharedPointer> {}(guard_instance);
+};
+
 template<class Callable,
          class Guard = void,
          details::execution_policy Policy = details::synchronous_policy>
-    requires(std::same_as<void, Guard> || std::derived_from<Guard, receiver>)
+    requires(std::same_as<void, Guard> || guard_like<Guard>)
 class connect;
 class chainable;
 
@@ -294,9 +611,14 @@ namespace details
              class Callable,
              class Guard,
              execution_policy Policy>
-        requires(std::same_as<void, Guard> || std::derived_from<Guard, receiver>)
+        requires(std::same_as<void, Guard> || guard_like<Guard>)
     class chain;
+    template<template<class> class SharedPointer>
+        requires shared_pointer_like<SharedPointer>
     class source;
+    template<details::basic_lockable Mutex = details::fake_mutex,
+             template<class> class SharedPointer = details::unsafe_shared_pointer>
+        requires details::shared_pointer_like<SharedPointer>
     class guard;
 } // namespace details
 
@@ -304,7 +626,8 @@ namespace details
 template<class Source>
 concept source_like =
     requires(const Source& source, typename std::remove_cvref_t<Source>::args tuple) {
-        std::derived_from<std::remove_cvref_t<Source>, details::source>;
+        // TODO
+        // std::derived_from<std::remove_cvref_t<Source>, details::source>;
         details::is_tuple<typename std::remove_cvref_t<Source>::args>;
         {
             []<class... Args>(const std::tuple<Args...>&)
@@ -314,14 +637,39 @@ concept source_like =
             []<class... Args>(const std::tuple<Args...>&)
             { source.connect_once(std::function<void(Args...)> {}); }(tuple)
         };
+        requires details::not_void<typename std::remove_cvref_t<Source>::connection_type>;
+        requires details::not_void<typename std::remove_cvref_t<Source>::connectable_type>;
     };
 
 namespace details
 {
-    template<class Appliable, class Source>
-    concept appliable = requires(const Source& source, Appliable appliable) {
-        ::source_like<Source>;
-        { appliable.accept(source) } -> ::source_like;
+    template<class Receiver, class MemberSignal, details::execution_policy Policy>
+    class forward_result;
+
+    template<class Receiver, class Signal, details::execution_policy Policy>
+    class forward_result<Receiver, Signal Receiver::*, Policy>
+    {
+    public:
+        forward_result(const Receiver& receiver,
+                       Signal Receiver::* receiver_signal,
+                       Policy&& policy,
+                       bool connect_once):
+            m_receiver { receiver },
+            m_receiver_signal { receiver_signal },
+            m_policy { std::forward<Policy>(policy) },
+            m_connect_once { connect_once }
+        {
+        }
+
+        template<source_like Source>
+        auto create_connection(Source&& origin) ->
+            typename std::remove_cvref_t<Source>::connection_type;
+
+    private:
+        const Receiver& m_receiver;
+        Signal Receiver::* m_receiver_signal;
+        Policy m_policy;
+        bool m_connect_once;
     };
 
     template<class... Tuples>
@@ -362,13 +710,13 @@ namespace details
 
     template<class Self, class Callable, class Guard>
     concept callable_with_guard = requires {
-        std::derived_from<Guard, receiver>;
+        guard_like<Guard>;
         details::partially_tuple_callable<Callable, typename std::remove_cvref_t<Self>::args>;
     };
 
     template<class Self, class Callable, class Guard>
     concept method_with_guard = requires {
-        std::derived_from<Guard, receiver>;
+        guard_like<Guard>;
         std::is_member_function_pointer_v<Callable>;
         details::partially_tuple_callable<
             Callable,
@@ -380,20 +728,25 @@ namespace details
 
 // ### Class emitter declaration
 
+template<details::basic_lockable Mutex = details::fake_mutex,
+         template<class> class SharedPointer = details::unsafe_shared_pointer>
+    requires details::shared_pointer_like<SharedPointer>
 class emitter
 {
 public:
-    friend class connection;
-    friend class scoped_connection;
-    friend class details::guard;
-    friend class details::source;
+    friend class connection<SharedPointer>;
+    friend class scoped_connection<SharedPointer>;
+    friend class details::guard<Mutex, SharedPointer>;
+    friend class details::source<SharedPointer>;
     friend class chainable;
     template<std::derived_from<chainable> Chainable,
              class Callable,
              class Guard,
              details::execution_policy Policy>
-        requires(std::same_as<void, Guard> || std::derived_from<Guard, receiver>)
+        requires(std::same_as<void, Guard> || guard_like<Guard>)
     friend class details::chain;
+    template<class Receiver, class MemberSignal, details::execution_policy Policy>
+    friend class details::forward_result;
 
     emitter() = default;
 
@@ -427,7 +780,7 @@ protected:
     auto connect(this const Receiver& self,
                  Emitter&& emitter,
                  signal<ReceiverArgs...> Receiver::* receiver_signal,
-                 Policy&& policy = {}) -> connection;
+                 Policy&& policy = {}) -> typename std::remove_cvref_t<Emitter>::connection_type;
 
     template<class Receiver,
              details::signal_arg... ReceiverArgs,
@@ -438,74 +791,63 @@ protected:
     auto connect_once(this const Receiver& self,
                       Emitter&& emitter,
                       signal<ReceiverArgs...> Receiver::* receiver_signal,
-                      Policy&& policy = {}) -> connection;
+                      Policy&& policy = {}) ->
+        typename std::remove_cvref_t<Emitter>::connection_type;
 
     template<class Receiver,
-             class MemberSignal,
-             details::execution_policy Policy = details::synchronous_policy>
-    class forward_result;
-
-    template<class Receiver, details::signal_arg... ReceiverArgs, details::execution_policy Policy>
-    class forward_result<Receiver, signal<ReceiverArgs...> Receiver::*, Policy>
-    {
-    public:
-        forward_result(const Receiver& receiver,
-                       signal<ReceiverArgs...> Receiver::* receiver_signal,
-                       Policy&& policy,
-                       bool connect_once):
-            m_receiver { receiver },
-            m_receiver_signal { receiver_signal },
-            m_policy { std::forward<Policy>(policy) },
-            m_connect_once { connect_once }
-        {
-        }
-
-        template<source_like Source>
-        auto create_connection(Source&& origin) -> connection;
-
-    private:
-        const Receiver& m_receiver;
-        signal<ReceiverArgs...> Receiver::* m_receiver_signal;
-        Policy m_policy;
-        bool m_connect_once;
-    };
-
-    template<class Receiver,
-             details::signal_arg... ReceiverArgs,
+             class Signal,
              details::execution_policy Policy = details::synchronous_policy>
     auto forward_to(this const Receiver& self,
-                    signal<ReceiverArgs...> Receiver::* receiver_signal,
+                    Signal Receiver::* receiver_signal,
                     Policy&& policy = {})
-        -> forward_result<Receiver, signal<ReceiverArgs...> Receiver::*, Policy>
-    {
-        return { self, receiver_signal, std::forward<Policy>(policy), false };
-    }
+        -> details::forward_result<Receiver, Signal Receiver::*, Policy>;
 
     template<class Receiver,
-             details::signal_arg... ReceiverArgs,
+             class Signal,
              details::execution_policy Policy = details::synchronous_policy>
     auto forward_once_to(this const Receiver& self,
-                         signal<ReceiverArgs...> Receiver::* receiver_signal,
+                         Signal Receiver::* receiver_signal,
                          Policy&& policy = {})
-        -> forward_result<Receiver, signal<ReceiverArgs...> Receiver::*, Policy>
-    {
-        return { self, receiver_signal, std::forward<Policy>(policy), true };
-    }
+        -> details::forward_result<Receiver, Signal Receiver::*, Policy>;
 
 private:
     template<class Receiver, details::signal_arg... ReceiverArgs>
     auto forwarding_lambda(this const Receiver& self,
                            signal<ReceiverArgs...> Receiver::* receiver_signal);
-
-    class connection_holder;
 };
 
 namespace details
 {
+    template<class Appliable, class Source>
+    concept appliable = requires(const Source& source, Appliable appliable) {
+        ::source_like<Source>;
+        { appliable.accept(source) } -> ::source_like;
+    };
+
+    template<class EmitterLike>
+    concept emitter_like = requires(EmitterLike emitter_instance) {
+        []<details::basic_lockable Mutex, template<class> class SharedPointer>(
+            const emitter<Mutex, SharedPointer>&)
+            requires details::shared_pointer_like<SharedPointer> {}(emitter_instance);
+    };
+
+    template<class SignalLike, class Emitter>
+    concept signal_like = requires(SignalLike signal_instance) {
+        requires emitter_like<Emitter>;
+        []<signal_arg... Args>(const typename Emitter::template signal<Args...>&) {}(
+            signal_instance);
+    };
+
+    class connection_holder;
+
     // ### Class source
+    template<template<class> class SharedPointer>
+        requires details::shared_pointer_like<SharedPointer>
     class source
     {
     public:
+        using connection_type = connection<SharedPointer>;
+
         template<::source_like Self, appliable<Self> Appliable>
         auto apply(this Self&& self, Appliable&& appliable)
         {
@@ -538,54 +880,76 @@ namespace details
 
         template<::source_like Self,
                  class Receiver,
-                 signal_arg... ReceiverArgs,
+                 signal_like<Receiver> Signal,
                  execution_policy Policy>
-            requires partially_tuple_callable<std::function<void(ReceiverArgs...)>,
-                                              typename std::remove_cvref_t<Self>::args>
+        /*requires partially_tuple_callable<std::function<void(ReceiverArgs...)>,
+                                          typename std::remove_cvref_t<Self>::args>*/
         auto operator|(
             this Self&& self,
-            emitter::forward_result<Receiver, emitter::signal<ReceiverArgs...> Receiver::*, Policy>&
-                connect_result)
+            details::template forward_result<Receiver, Signal Receiver::*, Policy>& connect_result)
         {
             return connect_result.create_connection(std::forward<Self>(self));
         }
 
         template<::source_like Self,
                  class Receiver,
-                 signal_arg... ReceiverArgs,
+                 signal_like<Receiver> Signal,
                  execution_policy Policy>
-            requires partially_tuple_callable<std::function<void(ReceiverArgs...)>,
-                                              typename std::remove_cvref_t<Self>::args>
-        auto operator|(this Self&& self,
-                       emitter::forward_result<Receiver,
-                                               emitter::signal<ReceiverArgs...> Receiver::*,
-                                               Policy>&& connect_result)
+        /*requires partially_tuple_callable<std::function<void(ReceiverArgs...)>,
+                                          typename std::remove_cvref_t<Self>::args>*/
+        auto operator|(
+            this Self&& self,
+            details::template forward_result<Receiver, Signal Receiver::*, Policy>&& connect_result)
         {
             return std::move(connect_result).create_connection(std::forward<Self>(self));
         }
     };
 
+    class connection_holder
+    {
+    public:
+        using exception_handler = std::function<void(std::exception_ptr)>;
+
+        virtual ~connection_holder() = default;
+        virtual void add_exception_handler(connection_holder::exception_handler handler) = 0;
+
+        virtual void disconnect() = 0;
+        virtual void suspend() = 0;
+        virtual void resume() = 0;
+    };
+
 } // namespace details
+
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
+template<class Receiver, class Signal, details::execution_policy Policy>
+auto emitter<Mutex, SharedPointer>::forward_to(this const Receiver& self,
+                                               Signal Receiver::* receiver_signal,
+                                               Policy&& policy)
+    -> details::forward_result<Receiver, Signal Receiver::*, Policy>
+{
+    return { self, receiver_signal, std::forward<Policy>(policy), false };
+}
+
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
+template<class Receiver, class Signal, details::execution_policy Policy>
+auto emitter<Mutex, SharedPointer>::forward_once_to(this const Receiver& self,
+                                                    Signal Receiver::* receiver_signal,
+                                                    Policy&& policy)
+    -> details::forward_result<Receiver, Signal Receiver::*, Policy>
+{
+    return { self, receiver_signal, std::forward<Policy>(policy), true };
+}
 
 // ### Connection related classes
 
-class emitter::connection_holder
-{
-public:
-    using exception_handler = std::function<void(std::exception_ptr)>;
-
-    virtual ~connection_holder() = default;
-    virtual void add_exception_handler(emitter::connection_holder::exception_handler handler) = 0;
-
-    virtual void disconnect() = 0;
-    virtual void suspend() = 0;
-    virtual void resume() = 0;
-};
-
+template<template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 class connection
 {
 public:
-    explicit connection(std::weak_ptr<emitter::connection_holder> weak_holder):
+    explicit connection(typename SharedPointer<details::connection_holder>::weak_type weak_holder):
         m_holder { std::move(weak_holder) }
     {
     }
@@ -623,7 +987,7 @@ public:
         locked_holder->resume();
     }
 
-    void add_exception_handler(emitter::connection_holder::exception_handler handler)
+    void add_exception_handler(details::connection_holder::exception_handler handler)
     {
         auto locked_holder { m_holder.lock() };
         if (!locked_holder)
@@ -634,19 +998,21 @@ public:
         locked_holder->add_exception_handler(std::move(handler));
     }
 
-    auto operator==(emitter::connection_holder* holder) -> bool
+    auto operator==(details::connection_holder* holder) -> bool
     {
         return m_holder.lock().get() == holder;
     }
 
 private:
-    std::weak_ptr<emitter::connection_holder> m_holder;
+    typename SharedPointer<details::connection_holder>::weak_type m_holder;
 };
 
+template<template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 class scoped_connection
 {
 public:
-    explicit scoped_connection(connection conn):
+    explicit scoped_connection(connection<SharedPointer> conn):
         m_connection { std::move(conn) }
     {
     }
@@ -676,19 +1042,21 @@ public:
         m_connection.disconnect();
     }
 
-    auto operator==(emitter::connection_holder* holder) -> bool
+    auto operator==(details::connection_holder* holder) -> bool
     {
         return m_connection == holder;
     }
 
 private:
-    connection m_connection;
+    connection<SharedPointer> m_connection;
 };
 
+template<template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 class inhibitor
 {
 public:
-    explicit inhibitor(connection conn):
+    explicit inhibitor(connection<SharedPointer> conn):
         m_connection { std::move(conn) }
     {
         m_connection.suspend();
@@ -706,18 +1074,20 @@ public:
     }
 
 private:
-    connection m_connection;
+    connection<SharedPointer> m_connection;
 };
 
 // ### Class receiver
 
 namespace details
 {
+    template<details::basic_lockable Mutex, template<class> class SharedPointer>
+        requires details::shared_pointer_like<SharedPointer>
     class guard
     {
     public:
         template<details::signal_arg... Args>
-        friend class emitter::signal;
+        friend class emitter<Mutex, SharedPointer>::signal;
 
         guard() = default;
         ~guard() = default;
@@ -745,41 +1115,48 @@ namespace details
         }
 
     protected:
-        void clean(emitter::connection_holder* holder) const
+        void clean(details::connection_holder* holder) const
         {
             std::lock_guard lock { m_mutex };
             std::erase(m_emitting_sources, holder);
         }
 
-        void add_emitting_source(connection source) const
+        void add_emitting_source(connection<SharedPointer> source) const
         {
             std::lock_guard lock { m_mutex };
             m_emitting_sources.emplace_back(std::move(source));
         }
 
     private:
-        mutable std::vector<scoped_connection> m_emitting_sources;
-        mutable std::mutex m_mutex;
+        mutable std::vector<scoped_connection<SharedPointer>> m_emitting_sources;
+        mutable Mutex m_mutex;
     };
 
 } // namespace details
 
-class receiver: public details::guard
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
+class receiver: public details::guard<Mutex, SharedPointer>
 {
 public:
     template<details::signal_arg... Args>
-    friend class emitter::signal;
+    friend class emitter<Mutex, SharedPointer>::signal;
 };
 
 // ### connectable
 
-class connectable: public details::source
+template<template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
+class connectable: public details::source<SharedPointer>
 {
 public:
+    using connectable_type = connectable<SharedPointer>;
+
     template<class Self,
              class Callable,
              details::execution_policy Policy = details::synchronous_policy>
-    auto connect(this Self&& self, Callable&& callable, Policy&& policy = {}) -> connection
+    auto connect(this Self&& self, Callable&& callable, Policy&& policy = {})
+        -> connection<SharedPointer>
     {
         return std::forward<Self>(self).m_source.connect(
             std::forward<Self>(self).forwarding_lambda(std::forward<Callable>(callable)),
@@ -789,7 +1166,8 @@ public:
     template<class Self,
              class Callable,
              details::execution_policy Policy = details::synchronous_policy>
-    auto connect_once(this Self&& self, Callable&& callable, Policy&& policy = {}) -> connection
+    auto connect_once(this Self&& self, Callable&& callable, Policy&& policy = {})
+        -> connection<SharedPointer>
     {
         return std::forward<Self>(self).m_source.connect_once(
             std::forward<Self>(self).forwarding_lambda(std::forward<Callable>(callable)),
@@ -798,10 +1176,10 @@ public:
 
     template<class Self,
              class Callable,
-             std::derived_from<receiver> Receiver,
+             guard_like Receiver,
              details::execution_policy Policy = details::synchronous_policy>
     auto connect(this Self&& self, Callable&& callable, const Receiver& guard, Policy&& policy = {})
-        -> connection
+        -> connection<SharedPointer>
     {
         return std::forward<Self>(self).m_source.connect(
             std::forward<Self>(self).forwarding_lambda(std::forward<Callable>(callable)),
@@ -811,12 +1189,12 @@ public:
 
     template<class Self,
              class Callable,
-             std::derived_from<receiver> Receiver,
+             guard_like Receiver,
              details::execution_policy Policy = details::synchronous_policy>
     auto connect_once(this Self&& self,
                       Callable&& callable,
                       const Receiver& guard,
-                      Policy&& policy = {}) -> connection
+                      Policy&& policy = {}) -> connection<SharedPointer>
     {
         return std::forward<Self>(self).m_source.connect_once(
             std::forward<Self>(self).forwarding_lambda(std::forward<Callable>(callable)),
@@ -825,14 +1203,14 @@ public:
     }
 
     template<class Self,
-             std::derived_from<receiver> Receiver,
+             guard_like Receiver,
              class Result,
              details::execution_policy Policy = details::synchronous_policy,
              class... MemberFunctionArgs>
     auto connect(this Self&& self,
                  Result (Receiver::*callable)(MemberFunctionArgs...),
                  Receiver& guard,
-                 Policy&& policy = {}) -> connection
+                 Policy&& policy = {}) -> connection<SharedPointer>
     {
         return std::forward<Self>(self).m_source.connect(
             std::forward<Self>(self).forwarding_lambda(
@@ -843,14 +1221,14 @@ public:
     }
 
     template<class Self,
-             std::derived_from<receiver> Receiver,
+             guard_like Receiver,
              class Result,
              details::execution_policy Policy = details::synchronous_policy,
              class... MemberFunctionArgs>
     auto connect_once(this Self&& self,
                       Result (Receiver::*callable)(MemberFunctionArgs...),
                       Receiver& guard,
-                      Policy&& policy = {}) -> connection
+                      Policy&& policy = {}) -> connection<SharedPointer>
     {
         return std::forward<Self>(self).m_source.connect_once(
             std::forward<Self>(self).forwarding_lambda(
@@ -861,14 +1239,14 @@ public:
     }
 
     template<class Self,
-             std::derived_from<receiver> Receiver,
+             guard_like Receiver,
              class Result,
              details::execution_policy Policy = details::synchronous_policy,
              class... MemberFunctionArgs>
     auto connect(this Self&& self,
                  Result (Receiver::*callable)(MemberFunctionArgs...) const,
                  const Receiver& guard,
-                 Policy&& policy = {}) -> connection
+                 Policy&& policy = {}) -> connection<SharedPointer>
     {
         return std::forward<Self>(self).m_source.connect(
             std::forward<Self>(self).forwarding_lambda(
@@ -879,14 +1257,14 @@ public:
     }
 
     template<class Self,
-             std::derived_from<receiver> Receiver,
+             guard_like Receiver,
              class Result,
              details::execution_policy Policy = details::synchronous_policy,
              class... MemberFunctionArgs>
     auto connect_once(this Self&& self,
                       Result (Receiver::*callable)(MemberFunctionArgs...) const,
                       const Receiver& guard,
-                      Policy&& policy = {}) -> connection
+                      Policy&& policy = {}) -> connection<SharedPointer>
     {
         return std::forward<Self>(self).m_source.connect_once(
             std::forward<Self>(self).forwarding_lambda(
@@ -899,11 +1277,16 @@ public:
 
 // ### Signal definition
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
-class emitter::signal final: public details::source,
-                             public details::guard
+class emitter<Mutex, SharedPointer>::signal final: public details::source<SharedPointer>,
+                                                   public details::guard<Mutex, SharedPointer>
 {
 public:
+    using connection_type = connection<SharedPointer>;
+    using connectable_type = connectable<SharedPointer>;
+
     signal() = default;
 
     signal(const signal&):
@@ -938,25 +1321,25 @@ public:
 
     template<details::partially_callable<Args...> Callable,
              details::execution_policy Policy = details::synchronous_policy>
-    auto connect(Callable&& callable, Policy&& policy = {}) const -> connection;
+    auto connect(Callable&& callable, Policy&& policy = {}) const -> connection<SharedPointer>;
 
     template<details::partially_callable<Args...> Callable,
              details::execution_policy Policy = details::synchronous_policy>
-    auto connect_once(Callable&& callable, Policy&& policy = {}) const -> connection;
+    auto connect_once(Callable&& callable, Policy&& policy = {}) const -> connection<SharedPointer>;
 
     template<details::partially_callable<Args...> Callable,
-             std::derived_from<receiver> Receiver,
+             guard_like Receiver,
              details::execution_policy Policy = details::synchronous_policy>
     auto connect(Callable&& callable, const Receiver& guard, Policy&& policy = {}) const
-        -> connection;
+        -> connection<SharedPointer>;
 
     template<details::partially_callable<Args...> Callable,
-             std::derived_from<receiver> Receiver,
+             guard_like Receiver,
              details::execution_policy Policy = details::synchronous_policy>
     auto connect_once(Callable&& callable, const Receiver& guard, Policy&& policy = {}) const
-        -> connection;
+        -> connection<SharedPointer>;
 
-    template<std::derived_from<receiver> Receiver,
+    template<guard_like Receiver,
              class Result,
              details::execution_policy Policy = details::synchronous_policy,
              class... MemberFunctionArgs>
@@ -964,9 +1347,9 @@ public:
             partially_callable<Result (Receiver::*)(MemberFunctionArgs...), Receiver, Args...>
         auto connect(Result (Receiver::*callable)(MemberFunctionArgs...),
                      Receiver& guard,
-                     Policy&& policy = {}) const -> connection;
+                     Policy&& policy = {}) const -> connection<SharedPointer>;
 
-    template<std::derived_from<receiver> Receiver,
+    template<guard_like Receiver,
              class Result,
              details::execution_policy Policy = details::synchronous_policy,
              class... MemberFunctionArgs>
@@ -974,9 +1357,9 @@ public:
             partially_callable<Result (Receiver::*)(MemberFunctionArgs...), Receiver, Args...>
         auto connect_once(Result (Receiver::*callable)(MemberFunctionArgs...),
                           Receiver& guard,
-                          Policy&& policy = {}) const -> connection;
+                          Policy&& policy = {}) const -> connection<SharedPointer>;
 
-    template<std::derived_from<receiver> Receiver,
+    template<guard_like Receiver,
              class Result,
              details::execution_policy Policy = details::synchronous_policy,
              class... MemberFunctionArgs>
@@ -985,9 +1368,9 @@ public:
                                              Args...>
     auto connect(Result (Receiver::*callable)(MemberFunctionArgs...) const,
                  const Receiver& guard,
-                 Policy&& policy = {}) const -> connection;
+                 Policy&& policy = {}) const -> connection<SharedPointer>;
 
-    template<std::derived_from<receiver> Receiver,
+    template<guard_like Receiver,
              class Result,
              details::execution_policy Policy = details::synchronous_policy,
              class... MemberFunctionArgs>
@@ -996,21 +1379,22 @@ public:
                                              Args...>
     auto connect_once(Result (Receiver::*callable)(MemberFunctionArgs...) const,
                       const Receiver& guard,
-                      Policy&& policy = {}) const -> connection;
+                      Policy&& policy = {}) const -> connection<SharedPointer>;
 
 private:
     template<details::partially_callable<Args...> Callable, details::execution_policy Policy>
-    auto connect_impl(Callable&& callable, Policy&& policy, bool connect_once) const -> connection;
+    auto connect_impl(Callable&& callable, Policy&& policy, bool connect_once) const
+        -> connection<SharedPointer>;
 
     template<details::partially_callable<Args...> Callable,
-             std::derived_from<receiver> Receiver,
+             guard_like Receiver,
              details::execution_policy Policy>
     auto connect_with_guard(Callable&& callable,
                             const Receiver& guard,
                             Policy&& policy,
-                            bool connect_once) const -> connection;
+                            bool connect_once) const -> connection<SharedPointer>;
 
-    template<std::derived_from<receiver> Receiver, class MemberFunction>
+    template<guard_like Receiver, class MemberFunction>
         requires details::partially_callable<MemberFunction, Receiver, Args...>
     static auto member_function_lambda(MemberFunction member_function, Receiver& guard)
     {
@@ -1042,7 +1426,7 @@ private:
 
     class connection_holder_implementation;
 
-    auto copy_slots() const -> std::vector<std::shared_ptr<connection_holder_implementation>>
+    auto copy_slots() const -> std::vector<SharedPointer<connection_holder_implementation>>
     {
         std::lock_guard lock { m_mutex };
         return m_slots;
@@ -1054,8 +1438,8 @@ private:
         std::erase_if(m_slots, [holder](const auto& slot) { return slot.get() == holder; });
     }
 
-    mutable std::vector<std::shared_ptr<connection_holder_implementation>> m_slots {};
-    mutable std::mutex m_mutex;
+    mutable std::vector<SharedPointer<connection_holder_implementation>> m_slots {};
+    mutable Mutex m_mutex;
 };
 
 // ### class chainable
@@ -1068,7 +1452,7 @@ namespace details
              class Callable,
              class Guard,
              execution_policy Policy>
-        requires(std::same_as<void, Guard> || std::derived_from<Guard, receiver>)
+        requires(std::same_as<void, Guard> || guard_like<Guard>)
     class chain
     {
     public:
@@ -1091,14 +1475,13 @@ namespace details
 
     template<std::derived_from<chainable> Chainable,
              class Receiver,
-             details::signal_arg... Args,
+             signal_like<Receiver> Signal,
              details::execution_policy Policy>
-    class chain<Chainable, emitter::signal<Args...> Receiver::*, void, Policy>
+    class chain<Chainable, Signal Receiver::*, void, Policy>
     {
     public:
         chain(Chainable&& chainable,
-              const emitter::forward_result<Receiver, emitter::signal<Args...> Receiver::*, Policy>&
-                  connect_result):
+              const forward_result<Receiver, Signal Receiver::*, Policy>& connect_result):
             m_chainable { std::forward<Chainable>(chainable) },
             m_connect_result { std::move(connect_result) }
         {
@@ -1112,8 +1495,7 @@ namespace details
 
     private:
         std::remove_cvref_t<Chainable> m_chainable;
-        emitter::forward_result<Receiver, emitter::signal<Args...> Receiver::*, Policy>
-            m_connect_result;
+        forward_result<Receiver, Signal Receiver::*, Policy> m_connect_result;
     };
 
 } // namespace details
@@ -1125,7 +1507,7 @@ public:
     auto operator|(this Self&& self, OtherChainable&& other);
 
     template<class Self, class Callable, class Guard, details::execution_policy Policy>
-        requires(std::same_as<void, Guard> || std::derived_from<Guard, receiver>)
+        requires(std::same_as<void, Guard> || guard_like<Guard>)
     auto operator|(this Self&& self, const connect<Callable, Guard, Policy>& connect)
         -> details::chain<Self, Callable, Guard, Policy>
     {
@@ -1134,13 +1516,12 @@ public:
 
     template<class Self,
              class Receiver,
-             details::signal_arg... ReceiverArgs,
+             details::signal_like<Receiver> Signal,
              details::execution_policy Policy>
-    auto operator|(this Self&& self,
-                   const emitter::forward_result<Receiver,
-                                                 emitter::signal<ReceiverArgs...> Receiver::*,
-                                                 Policy>& connect_result)
-        -> details::chain<Self, emitter::signal<ReceiverArgs...> Receiver::*, void, Policy>
+    auto operator|(
+        this Self&& self,
+        const details::forward_result<Receiver, Signal Receiver::*, Policy>& connect_result)
+        -> details::chain<Self, Signal Receiver::*, void, Policy>
     {
         return { std::forward<Self>(self), connect_result };
     }
@@ -1191,10 +1572,10 @@ namespace details
 
     template<::source_like Source, std::size_t... Indexes>
         requires(valid_map<Source, Indexes...>)
-    class mapped_source: public connectable
+    class mapped_source: public std::remove_cvref_t<Source>::connectable_type
     {
     public:
-        friend connectable;
+        friend std::remove_cvref_t<Source>::connectable_type;
 
         using args = std::tuple<
             std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>...>;
@@ -1241,21 +1622,17 @@ namespace details
     concept valid_transformations = requires(Transformations... transformations,
                                              typename std::remove_cvref_t<Source>::args args) {
         ::source_like<Source>;
-        {
-            [transformations, args]<std::size_t... Indexes>(const std::index_sequence<Indexes...>&)
-            {
-                (std::invoke(transformations...[Indexes], std::get<Indexes>(args)), ...);
-            }(std::make_index_sequence<sizeof...(Transformations)> {})
-        };
         [transformations,
          args]<std::size_t... Indexes>(const std::index_sequence<Indexes...>&) constexpr
-        {
-            return (
-                not_void<std::invoke_result_t<
-                    Transformations...[Indexes],
-                    std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>>> &&
-                ...);
-        }(std::make_index_sequence<sizeof...(Transformations)> {});
+            requires(
+                (std::invocable<
+                     Transformations...[Indexes],
+                     std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>> &&
+                 ...) &&
+                (not_void<std::invoke_result_t<
+                     Transformations...[Indexes],
+                     std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>>> &&
+                 ...)) {}(std::make_index_sequence<sizeof...(Transformations)> {});
     };
 
     template<class Tuple, class... Transformations>
@@ -1272,10 +1649,10 @@ namespace details
 
     template<::source_like Source, class... Transformations>
         requires(valid_transformations<Source, Transformations...>)
-    class transformed_source: public connectable
+    class transformed_source: public std::remove_cvref_t<Source>::connectable_type
     {
     public:
-        friend connectable;
+        friend std::remove_cvref_t<Source>::connectable_type;
 
         using args = transformed_source_args_t<typename std::remove_cvref_t<Source>::args,
                                                Transformations...>;
@@ -1362,10 +1739,10 @@ namespace details
     template<::source_like Source,
              partially_tuple_callable<typename std::remove_cvref_t<Source>::args> Filter>
         requires valid_filter<Source, Filter>
-    class filtered_source: public connectable
+    class filtered_source: public std::remove_cvref_t<Source>::connectable_type
     {
     public:
-        friend connectable;
+        friend std::remove_cvref_t<Source>::connectable_type;
 
         using args = typename std::remove_cvref_t<Source>::args;
 
@@ -1415,8 +1792,11 @@ private:
 
 // ### connection_holder_implementation class
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
-class emitter::signal<Args...>::connection_holder_implementation final: public connection_holder
+class emitter<Mutex, SharedPointer>::signal<Args...>::connection_holder_implementation final
+    : public details::connection_holder
 {
     template<class T>
     using ref_or_value = std::conditional_t<std::is_lvalue_reference_v<T>,
@@ -1440,7 +1820,7 @@ public:
     connection_holder_implementation(const signal& connected_signal,
                                      Callable&& callable,
                                      Policy&& policy,
-                                     guard& guard,
+                                     details::guard<Mutex, SharedPointer>& guard,
                                      bool single_shot = false):
         connection_holder_implementation(connected_signal,
                                          std::forward<Callable>(callable),
@@ -1508,7 +1888,7 @@ public:
         m_signal.disconnect(this);
         if (m_guard != nullptr)
         {
-            guard* guard { nullptr };
+            details::guard<Mutex, SharedPointer>* guard { nullptr };
             std::swap(guard, m_guard);
             guard->clean(this);
         }
@@ -1524,7 +1904,7 @@ public:
         m_suspended.store(false, std::memory_order_relaxed);
     }
 
-    void add_exception_handler(emitter::connection_holder::exception_handler handler) override
+    void add_exception_handler(details::connection_holder::exception_handler handler) override
     {
         std::lock_guard lock { m_mutex };
         m_exception_handlers.emplace_back(std::move(handler));
@@ -1547,9 +1927,9 @@ private:
 
     signal::slot m_slot;
     std::vector<exception_handler> m_exception_handlers;
-    mutable std::mutex m_mutex;
+    mutable Mutex m_mutex;
     const signal& m_signal;
-    guard* m_guard { nullptr };
+    details::guard<Mutex, SharedPointer>* m_guard { nullptr };
     details::execution_policy_holder m_policy;
     std::atomic<bool> m_suspended { false };
     bool m_single_shot;
@@ -1557,16 +1937,20 @@ private:
 
 // ### emitter implementation
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<class Receiver,
          details::signal_arg... ReceiverArgs,
          source_like Emitter,
          details::execution_policy Policy>
-    requires(details::partially_tuple_callable<typename emitter::signal<ReceiverArgs...>::slot,
-                                               typename std::remove_cvref_t<Emitter>::args>)
-auto emitter::connect(this const Receiver& self,
-                      Emitter&& emitter,
-                      signal<ReceiverArgs...> Receiver::* receiver_signal,
-                      Policy&& policy) -> connection
+    requires(details::partially_tuple_callable<
+             typename emitter<Mutex, SharedPointer>::template signal<ReceiverArgs...>::slot,
+             typename std::remove_cvref_t<Emitter>::args>)
+auto emitter<Mutex, SharedPointer>::connect(
+    this const Receiver& self,
+    Emitter&& emitter,
+    ::emitter<Mutex, SharedPointer>::template signal<ReceiverArgs...> Receiver::* receiver_signal,
+    Policy&& policy) -> typename std::remove_cvref_t<Emitter>::connection_type
 {
     auto connection { std::forward<Emitter>(emitter).connect(
         self.forwarding_lambda(receiver_signal),
@@ -1575,16 +1959,20 @@ auto emitter::connect(this const Receiver& self,
     return connection;
 }
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<class Receiver,
          details::signal_arg... ReceiverArgs,
          source_like Emitter,
          details::execution_policy Policy>
-    requires(details::partially_tuple_callable<typename emitter::signal<ReceiverArgs...>::slot,
-                                               typename std::remove_cvref_t<Emitter>::args>)
-auto emitter::connect_once(this const Receiver& self,
-                           Emitter&& emitter,
-                           signal<ReceiverArgs...> Receiver::* receiver_signal,
-                           Policy&& policy) -> connection
+    requires(details::partially_tuple_callable<
+             typename emitter<Mutex, SharedPointer>::template signal<ReceiverArgs...>::slot,
+             typename std::remove_cvref_t<Emitter>::args>)
+auto emitter<Mutex, SharedPointer>::connect_once(
+    this const Receiver& self,
+    Emitter&& emitter,
+    signal<ReceiverArgs...> Receiver::* receiver_signal,
+    Policy&& policy) -> typename std::remove_cvref_t<Emitter>::connection_type
 {
     auto connection { std::forward<Emitter>(emitter).connect_once(
         self.forwarding_lambda(receiver_signal),
@@ -1593,10 +1981,10 @@ auto emitter::connect_once(this const Receiver& self,
     return connection;
 }
 
-template<class Receiver, details::signal_arg... ReceiverArgs, details::execution_policy Policy>
+template<class Receiver, class Signal, details::execution_policy Policy>
 template<source_like Source>
-auto emitter::forward_result<Receiver, emitter::signal<ReceiverArgs...> Receiver::*, Policy>::
-    create_connection(Source&& origin) -> connection
+auto details::forward_result<Receiver, Signal Receiver::*, Policy>::create_connection(
+    Source&& origin) -> typename std::remove_cvref_t<Source>::connection_type
 {
     if (m_connect_once)
     {
@@ -1605,9 +1993,12 @@ auto emitter::forward_result<Receiver, emitter::signal<ReceiverArgs...> Receiver
     return m_receiver.connect(std::forward<Source>(origin), m_receiver_signal, m_policy);
 }
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<class Receiver, details::signal_arg... ReceiverArgs>
-auto emitter::forwarding_lambda(this const Receiver& self,
-                                signal<ReceiverArgs...> Receiver::* receiver_signal)
+auto emitter<Mutex, SharedPointer>::forwarding_lambda(
+    this const Receiver& self,
+    signal<ReceiverArgs...> Receiver::* receiver_signal)
 {
     return [&emitted_signal =
                 self.*receiver_signal]<details::signal_arg... Args>(Args&&... args) mutable
@@ -1622,45 +2013,59 @@ auto emitter::forwarding_lambda(this const Receiver& self,
 
 // ### signal implementation
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
 template<details::partially_callable<Args...> Callable, details::execution_policy Policy>
-auto emitter::signal<Args...>::connect_impl(Callable&& callable,
-                                            Policy&& policy,
-                                            bool connect_once) const -> connection
+auto emitter<Mutex, SharedPointer>::signal<Args...>::connect_impl(Callable&& callable,
+                                                                  Policy&& policy,
+                                                                  bool connect_once) const
+    -> connection<SharedPointer>
 {
     std::lock_guard lock { m_mutex };
-    m_slots.emplace_back(
-        std::make_shared<connection_holder_implementation>(*this,
-                                                           std::forward<Callable>(callable),
-                                                           std::forward<Policy>(policy),
-                                                           connect_once));
+    m_slots.emplace_back(new connection_holder_implementation(*this,
+                                                              std::forward<Callable>(callable),
+                                                              std::forward<Policy>(policy),
+                                                              connect_once));
 
-    return connection { m_slots.back() };
+    return connection<SharedPointer> {
+        typename SharedPointer<details::connection_holder>::weak_type(m_slots.back())
+    };
 }
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
 template<details::partially_callable<Args...> Callable, details::execution_policy Policy>
-auto emitter::signal<Args...>::connect(Callable&& callable, Policy&& policy) const -> connection
+auto emitter<Mutex, SharedPointer>::signal<Args...>::connect(Callable&& callable,
+                                                             Policy&& policy) const
+    -> connection<SharedPointer>
 {
     return connect_impl(std::forward<Callable>(callable), std::forward<Policy>(policy), false);
 }
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
 template<details::partially_callable<Args...> Callable, details::execution_policy Policy>
-auto emitter::signal<Args...>::connect_once(Callable&& callable, Policy&& policy) const
-    -> connection
+auto emitter<Mutex, SharedPointer>::signal<Args...>::connect_once(Callable&& callable,
+                                                                  Policy&& policy) const
+    -> connection<SharedPointer>
 {
     return connect_impl(std::forward<Callable>(callable), std::forward<Policy>(policy), true);
 }
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
 template<details::partially_callable<Args...> Callable,
-         std::derived_from<receiver> Receiver,
+         guard_like Receiver,
          details::execution_policy Policy>
-auto emitter::signal<Args...>::connect_with_guard(Callable&& callable,
-                                                  const Receiver& guard,
-                                                  Policy&& policy,
-                                                  bool connect_once) const -> connection
+auto emitter<Mutex, SharedPointer>::signal<Args...>::connect_with_guard(Callable&& callable,
+                                                                        const Receiver& guard,
+                                                                        Policy&& policy,
+                                                                        bool connect_once) const
+    -> connection<SharedPointer>
 {
     auto connection {
         connect_impl(std::forward<Callable>(callable), std::forward<Policy>(policy), connect_once)
@@ -1670,13 +2075,16 @@ auto emitter::signal<Args...>::connect_with_guard(Callable&& callable,
     return connection;
 }
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
 template<details::partially_callable<Args...> Callable,
-         std::derived_from<receiver> Receiver,
+         guard_like Receiver,
          details::execution_policy Policy>
-auto emitter::signal<Args...>::connect(Callable&& callable,
-                                       const Receiver& guard,
-                                       Policy&& policy) const -> connection
+auto emitter<Mutex, SharedPointer>::signal<Args...>::connect(Callable&& callable,
+                                                             const Receiver& guard,
+                                                             Policy&& policy) const
+    -> connection<SharedPointer>
 {
     return connect_with_guard(std::forward<Callable>(callable),
                               guard,
@@ -1684,13 +2092,16 @@ auto emitter::signal<Args...>::connect(Callable&& callable,
                               false);
 }
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
 template<details::partially_callable<Args...> Callable,
-         std::derived_from<receiver> Receiver,
+         guard_like Receiver,
          details::execution_policy Policy>
-auto emitter::signal<Args...>::connect_once(Callable&& callable,
-                                            const Receiver& guard,
-                                            Policy&& policy) const -> connection
+auto emitter<Mutex, SharedPointer>::signal<Args...>::connect_once(Callable&& callable,
+                                                                  const Receiver& guard,
+                                                                  Policy&& policy) const
+    -> connection<SharedPointer>
 {
     return connect_with_guard(std::forward<Callable>(callable),
                               guard,
@@ -1698,16 +2109,19 @@ auto emitter::signal<Args...>::connect_once(Callable&& callable,
                               true);
 }
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
-template<std::derived_from<receiver> Receiver,
+template<guard_like Receiver,
          class Result,
          details::execution_policy Policy,
          class... MemberFunctionArgs>
     requires details::
         partially_callable<Result (Receiver::*)(MemberFunctionArgs...), Receiver, Args...>
-    auto emitter::signal<Args...>::connect(Result (Receiver::*callable)(MemberFunctionArgs...),
-                                           Receiver& guard,
-                                           Policy&& policy) const -> connection
+    auto emitter<Mutex, SharedPointer>::signal<Args...>::connect(
+        Result (Receiver::*callable)(MemberFunctionArgs...),
+        Receiver& guard,
+        Policy&& policy) const -> connection<SharedPointer>
 {
     return connect_with_guard(member_function_lambda(callable, guard),
                               guard,
@@ -1715,16 +2129,19 @@ template<std::derived_from<receiver> Receiver,
                               false);
 }
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
-template<std::derived_from<receiver> Receiver,
+template<guard_like Receiver,
          class Result,
          details::execution_policy Policy,
          class... MemberFunctionArgs>
     requires details::
         partially_callable<Result (Receiver::*)(MemberFunctionArgs...), Receiver, Args...>
-    auto emitter::signal<Args...>::connect_once(Result (Receiver::*callable)(MemberFunctionArgs...),
-                                                Receiver& guard,
-                                                Policy&& policy) const -> connection
+    auto emitter<Mutex, SharedPointer>::signal<Args...>::connect_once(
+        Result (Receiver::*callable)(MemberFunctionArgs...),
+        Receiver& guard,
+        Policy&& policy) const -> connection<SharedPointer>
 {
     return connect_with_guard(member_function_lambda(callable, guard),
                               guard,
@@ -1732,17 +2149,20 @@ template<std::derived_from<receiver> Receiver,
                               true);
 }
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
-template<std::derived_from<receiver> Receiver,
+template<guard_like Receiver,
          class Result,
          details::execution_policy Policy,
          class... MemberFunctionArgs>
     requires details::partially_callable<Result (Receiver::*)(MemberFunctionArgs...) const,
                                          const Receiver,
                                          Args...>
-auto emitter::signal<Args...>::connect(Result (Receiver::*callable)(MemberFunctionArgs...) const,
-                                       const Receiver& guard,
-                                       Policy&& policy) const -> connection
+auto emitter<Mutex, SharedPointer>::signal<Args...>::connect(
+    Result (Receiver::*callable)(MemberFunctionArgs...) const,
+    const Receiver& guard,
+    Policy&& policy) const -> connection<SharedPointer>
 {
     return connect_with_guard(member_function_lambda(callable, guard),
                               guard,
@@ -1750,18 +2170,20 @@ auto emitter::signal<Args...>::connect(Result (Receiver::*callable)(MemberFuncti
                               false);
 }
 
+template<details::basic_lockable Mutex, template<class> class SharedPointer>
+    requires details::shared_pointer_like<SharedPointer>
 template<details::signal_arg... Args>
-template<std::derived_from<receiver> Receiver,
+template<guard_like Receiver,
          class Result,
          details::execution_policy Policy,
          class... MemberFunctionArgs>
     requires details::partially_callable<Result (Receiver::*)(MemberFunctionArgs...) const,
                                          const Receiver,
                                          Args...>
-auto emitter::signal<Args...>::connect_once(Result (Receiver::*callable)(MemberFunctionArgs...)
-                                                const,
-                                            const Receiver& guard,
-                                            Policy&& policy) const -> connection
+auto emitter<Mutex, SharedPointer>::signal<Args...>::connect_once(
+    Result (Receiver::*callable)(MemberFunctionArgs...) const,
+    const Receiver& guard,
+    Policy&& policy) const -> connection<SharedPointer>
 {
     return connect_with_guard(member_function_lambda(callable, guard),
                               guard,
@@ -1799,7 +2221,7 @@ public:
     }
 
     template<source_like Source>
-    auto create_connection(Source&& origin) -> connection
+    auto create_connection(Source&& origin) -> std::remove_cvref_t<Source>::connection_type
     {
         return std::forward<Source>(origin).connect(
             details::connect_base<Callable, Policy>::m_callable,
@@ -1807,8 +2229,7 @@ public:
     }
 };
 
-template<class Callable, class Guard, details::execution_policy Policy>
-    requires std::derived_from<Guard, receiver>
+template<class Callable, guard_like Guard, details::execution_policy Policy>
 class connect<Callable, Guard, Policy>: public details::connect_base<Callable, Policy>
 {
 public:
@@ -1820,7 +2241,7 @@ public:
     }
 
     template<source_like Source>
-    auto create_connection(Source&& origin) -> connection
+    auto create_connection(Source&& origin) -> std::remove_cvref_t<Source>::connection_type
     {
         return std::forward<Source>(origin).connect(
             details::connect_base<Callable, Policy>::m_callable,
@@ -1832,8 +2253,7 @@ private:
     const Guard& m_guard;
 };
 
-template<class Result, class... Args, class Guard, details::execution_policy Policy>
-    requires std::derived_from<Guard, receiver>
+template<class Result, class... Args, guard_like Guard, details::execution_policy Policy>
 class connect<Result (Guard::*)(Args...), Guard, Policy>
     : public details::connect_base<Result (Guard::*)(Args...), Policy>
 {
@@ -1846,7 +2266,7 @@ public:
     }
 
     template<source_like Source>
-    auto create_connection(Source&& origin) -> connection
+    auto create_connection(Source&& origin) -> std::remove_cvref_t<Source>::connection_type
     {
         return std::forward<Source>(origin).connect(
             details::connect_base<Result (Guard::*)(Args...), Policy>::m_callable,
@@ -1858,8 +2278,7 @@ private:
     Guard& m_guard;
 };
 
-template<class Result, class... Args, class Guard, details::execution_policy Policy>
-    requires std::derived_from<Guard, receiver>
+template<class Result, class... Args, guard_like Guard, details::execution_policy Policy>
 class connect<Result (Guard::*)(Args...) const, const Guard, Policy>
     : public details::connect_base<Result (Guard::*)(Args...) const, Policy>
 {
@@ -1873,7 +2292,7 @@ public:
     }
 
     template<source_like Source>
-    auto create_connection(Source&& origin) -> connection
+    auto create_connection(Source&& origin) -> std::remove_cvref_t<Source>::connection_type
     {
         return std::forward<Source>(origin).connect(
             details::connect_base<Result (Guard::*)(Args...) const, Policy>::m_callable,
@@ -1885,32 +2304,26 @@ private:
     const Guard& m_guard;
 };
 
-template<class Result, class... Args, class Guard, details::execution_policy Policy>
-    requires std::derived_from<Guard, receiver>
+template<class Result, class... Args, guard_like Guard, details::execution_policy Policy>
 connect(Result (Guard::*)(Args...) const, const Guard&, Policy)
     -> connect<Result (Guard::*)(Args...) const, Guard, Policy>;
 
-template<class Result, class... Args, class Guard>
-    requires std::derived_from<Guard, receiver>
+template<class Result, class... Args, guard_like Guard>
 connect(Result (Guard::*)(Args...) const, const Guard&)
     -> connect<Result (Guard::*)(Args...) const, Guard, details::synchronous_policy>;
 
-template<class Result, class... Args, class Guard, details::execution_policy Policy>
-    requires std::derived_from<Guard, receiver>
+template<class Result, class... Args, guard_like Guard, details::execution_policy Policy>
 connect(Result (Guard::*)(Args...), Guard&, Policy)
     -> connect<Result (Guard::*)(Args...), Guard, Policy>;
 
-template<class Result, class... Args, class Guard>
-    requires std::derived_from<Guard, receiver>
+template<class Result, class... Args, guard_like Guard>
 connect(Result (Guard::*)(Args...), Guard&)
     -> connect<Result (Guard::*)(Args...), Guard, details::synchronous_policy>;
 
-template<class Callable, class Guard, details::execution_policy Policy>
-    requires std::derived_from<Guard, receiver>
+template<class Callable, guard_like Guard, details::execution_policy Policy>
 connect(Callable&&, const Guard&, Policy&&) -> connect<Callable, Guard, Policy>;
 
-template<class Callable, class Guard>
-    requires std::derived_from<Guard, receiver>
+template<class Callable, guard_like Guard>
 connect(Callable&&, const Guard&) -> connect<Callable, Guard, details::synchronous_policy>;
 
 template<class Callable, details::execution_policy Policy>
@@ -1918,5 +2331,10 @@ connect(Callable&&, Policy&&) -> connect<Callable, void, Policy>;
 
 template<class Callable>
 connect(Callable&&) -> connect<Callable, void, details::synchronous_policy>;
+
+using basic_emitter = emitter<details::fake_mutex, details::unsafe_shared_pointer>;
+using safe_emitter = emitter<std::mutex, std::shared_ptr>;
+using basic_receiver = receiver<details::fake_mutex, details::unsafe_shared_pointer>;
+using safe_receiver = receiver<std::mutex, std::shared_ptr>;
 
 #endif // SIGSLOT_H_

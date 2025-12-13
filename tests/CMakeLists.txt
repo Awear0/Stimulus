@@ -83,5 +83,11 @@ else()
     endif()
 endif()
 
+target_compile_options(tests PRIVATE
+        -fsanitize=thread)
+
+target_link_options(tests PRIVATE
+        -fsanitize=thread)
+
 include(GoogleTest)
 gtest_discover_tests(tests)

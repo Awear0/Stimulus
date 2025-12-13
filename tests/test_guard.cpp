@@ -18,7 +18,7 @@ protected:
     generic_emitter<int&> int_ref_emitter;
 
     template<class... Args>
-    struct generic_receiver: public receiver
+    struct generic_receiver: public basic_receiver
     {
         void slot(Args&&... args)
         {

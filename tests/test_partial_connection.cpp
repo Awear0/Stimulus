@@ -16,7 +16,7 @@ protected:
     generic_emitter<int&> int_ref_emitter;
 
     template<details::signal_arg... Args>
-    struct forwarding_emitter: public emitter
+    struct forwarding_emitter: public basic_emitter
     {
         template<details::signal_arg... EmittingArgs>
         forwarding_emitter(const signal<EmittingArgs...>& emitting_signal)
@@ -28,7 +28,7 @@ protected:
     };
 
     template<details::signal_arg... Args>
-    struct forwarding_mapped_emitter: public emitter
+    struct forwarding_mapped_emitter: public basic_emitter
     {
         template<details::signal_arg... EmittingArgs>
         forwarding_mapped_emitter(const signal<EmittingArgs...>& emitting_signal)

@@ -8,11 +8,11 @@
 class test_threads: public ::testing::Test
 {
 protected:
-    generic_emitter<> empty_emitter;
+    safe_generic_emitter<> empty_emitter;
 };
 
 template<std::size_t Count>
-void create_connections(generic_emitter<>& empty)
+void create_connections(safe_generic_emitter<>& empty)
 {
     for (std::size_t i = 0; i < Count; ++i)
     {

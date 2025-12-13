@@ -26,7 +26,7 @@ struct copy_move_counter
 };
 
 template<details::not_void... Args>
-class generic_emitter: public emitter
+class generic_emitter: public basic_emitter
 {
 public:
     signal<Args...> generic_signal;
@@ -34,6 +34,18 @@ public:
     void generic_emit(Args... args)
     {
         emit(&generic_emitter::generic_signal, std::forward<Args>(args)...);
+    }
+};
+
+template<details::not_void... Args>
+class safe_generic_emitter: public safe_emitter
+{
+public:
+    signal<Args...> generic_signal;
+
+    void generic_emit(Args... args)
+    {
+        emit(&safe_generic_emitter::generic_signal, std::forward<Args>(args)...);
     }
 };
 

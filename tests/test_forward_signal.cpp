@@ -23,7 +23,7 @@ protected:
     generic_emitter<int&> int_ref_emitter;
 
     template<details::signal_arg... Args>
-    struct forwarding_emitter: public emitter
+    struct forwarding_emitter: public basic_emitter
     {
         forwarding_emitter(const signal<Args...>& emitting_signal)
         {
@@ -33,7 +33,7 @@ protected:
         signal<Args...> m_signal;
     };
 
-    struct map_to_nothing_forwarding_emitter: public emitter
+    struct map_to_nothing_forwarding_emitter: public basic_emitter
     {
         template<class... Args>
         map_to_nothing_forwarding_emitter(const signal<Args...>& emitting_signal)
@@ -45,7 +45,7 @@ protected:
     };
 
     template<class... Args>
-    struct map_to_first_forwarding_emitter: public emitter
+    struct map_to_first_forwarding_emitter: public basic_emitter
     {
         map_to_first_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
@@ -56,7 +56,7 @@ protected:
     };
 
     template<class... Args>
-    struct map_to_second_forwarding_emitter: public emitter
+    struct map_to_second_forwarding_emitter: public basic_emitter
     {
         map_to_second_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
@@ -67,7 +67,7 @@ protected:
     };
 
     template<class... Args>
-    struct map_swap_forwarding_emitter: public emitter
+    struct map_swap_forwarding_emitter: public basic_emitter
     {
         map_swap_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
@@ -78,7 +78,7 @@ protected:
     };
 
     template<class... Args>
-    struct no_transformation_forwarding_emitter: public emitter
+    struct no_transformation_forwarding_emitter: public basic_emitter
     {
         no_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
@@ -90,7 +90,7 @@ protected:
     };
 
     template<class... Args>
-    struct to_string_to_int_transformation_forwarding_emitter: public emitter
+    struct to_string_to_int_transformation_forwarding_emitter: public basic_emitter
     {
         to_string_to_int_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
@@ -102,7 +102,7 @@ protected:
     };
 
     template<class... Args>
-    struct to_string_transformation_forwarding_emitter: public emitter
+    struct to_string_transformation_forwarding_emitter: public basic_emitter
     {
         to_string_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
@@ -114,7 +114,7 @@ protected:
     };
 
     template<class... Args>
-    struct to_int_transformation_forwarding_emitter: public emitter
+    struct to_int_transformation_forwarding_emitter: public basic_emitter
     {
         to_int_transformation_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
@@ -126,7 +126,7 @@ protected:
     };
 
     template<class... Args>
-    struct to_int_transformation_forwarding_emitter2: public emitter
+    struct to_int_transformation_forwarding_emitter2: public basic_emitter
     {
         to_int_transformation_forwarding_emitter2(const signal<Args...>& emitting_signal)
         {
@@ -138,7 +138,7 @@ protected:
     };
 
     template<class... Args>
-    struct double_swap_forwarding_emitter: public emitter
+    struct double_swap_forwarding_emitter: public basic_emitter
     {
         double_swap_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
@@ -150,7 +150,7 @@ protected:
     };
 
     template<class... Args>
-    struct pipe_forwarding_emitter: public emitter
+    struct pipe_forwarding_emitter: public basic_emitter
     {
         pipe_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
@@ -161,7 +161,7 @@ protected:
     };
 
     template<class... Args>
-    struct full_pipe_forwarding_emitter: public emitter
+    struct full_pipe_forwarding_emitter: public basic_emitter
     {
         full_pipe_forwarding_emitter(const signal<Args...>& emitting_signal)
         {
@@ -172,7 +172,7 @@ protected:
     };
 
     template<class... Args>
-    struct signal_pipe_signal_emitter: public emitter
+    struct signal_pipe_signal_emitter: public basic_emitter
     {
         signal_pipe_signal_emitter(const signal<Args...>& emitting_signal)
         {
@@ -183,7 +183,7 @@ protected:
     };
 
     template<class... Args>
-    struct signal_pipe_signal_chain_emitter: public emitter
+    struct signal_pipe_signal_chain_emitter: public basic_emitter
     {
         signal_pipe_signal_chain_emitter(const signal<Args...>& emitting_signal)
         {
