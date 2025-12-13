@@ -234,33 +234,21 @@ struct is_partially_callable
 template<class Callable, class... Args>
 concept partially_callable = is_partially_callable_v<Callable, Args...>;
 
-template<class Callable, class... Args, std::size_t... Indexes>
-    requires partially_callable<Callable, Args...>
-constexpr auto
-    partial_call_impl(Callable&& callable, std::index_sequence<Indexes...>, Args&&... args)
-{
-    if constexpr (std::invocable<Callable, Args...[Indexes]...>)
-    {
-        return std::invoke(std::forward<Callable>(callable),
-                           std::forward<Args...[Indexes]>(args...[Indexes])...);
-    }
-    else
-    {
-        constexpr std::make_index_sequence<sizeof...(Indexes) - 1> index_sequence {};
-        return partial_call_impl(std::forward<Callable>(callable),
-                                 index_sequence,
-                                 std::forward<Args>(args)...);
-    }
-}
-
 template<class Callable, class... Args>
     requires partially_callable<Callable, Args...>
 constexpr auto partial_call(Callable&& callable, Args&&... args)
 {
-    constexpr std::make_index_sequence<sizeof...(Args)> index_sequence {};
-    return partial_call_impl(std::forward<Callable>(callable),
-                             index_sequence,
-                             std::forward<Args>(args)...);
+    if constexpr (std::invocable<Callable, Args...>)
+    {
+        return std::invoke(std::forward<Callable>(callable), std::forward<Args>(args)...);
+    }
+    else
+    {
+        auto args_tuple { std::forward_as_tuple(std::forward<Args>(args)...) };
+        auto&& [... first_args, last] { args_tuple };
+        return partial_call(std::forward<Callable>(callable),
+                            std::forward<decltype(first_args)>(first_args)...);
+    }
 }
 
 template<class Callable, class Tuple>
@@ -277,17 +265,11 @@ struct partially_tuple_callable_impl<Callable, std::tuple<Args...>>: std::true_t
 template<class Callable, class Tuple>
 concept partially_tuple_callable = partially_tuple_callable_impl<Callable, Tuple>::value;
 
-template<class Callable, class Tuple>
-    requires partially_tuple_callable<Callable, Tuple>
+template<is_tuple Tuple, partially_tuple_callable<Tuple> Callable>
 constexpr auto partial_tuple_call(Callable&& callable, Tuple&& tuple)
 {
-    constexpr std::make_index_sequence<std::tuple_size_v<Tuple>> index_sequence {};
-    return []<std::size_t... Indexes>(const std::index_sequence<Indexes...>&,
-                                      Callable&& callable,
-                                      Tuple&& tuple)
-    {
-        return partial_call(std::forward<Callable>(callable), std::get<Indexes>(tuple)...);
-    }(index_sequence, std::forward<Callable>(callable), std::forward<Tuple>(tuple));
+    auto&& [... args] { std::forward<Tuple>(tuple) };
+    return partial_call(std::forward<Callable>(callable), std::forward<decltype(args)>(args)...);
 }
 
 // ### Forward declaration
@@ -755,7 +737,7 @@ public:
 
 // ### connectable
 
-class connectable
+class connectable: public source
 {
 public:
     template<class Self, class Callable, execution_policy Policy = synchronous_policy>
@@ -869,7 +851,6 @@ public:
 
 // ### Signal definition
 
-// TODO AROSS: Make connectable?
 template<signal_arg... Args>
 class emitter::signal final: public source,
                              public guard
@@ -1081,9 +1062,6 @@ private:
         m_connect_result;
 };
 
-template<std::derived_from<chainable> Lhs, std::derived_from<chainable> Rhs>
-class composed_chainable;
-
 class chainable
 {
 public:
@@ -1147,8 +1125,7 @@ concept valid_map = requires {
 
 template<source_like Source, std::size_t... Indexes>
     requires(valid_map<Source, Indexes...>)
-class mapped_source: public source,
-                     public connectable
+class mapped_source: public connectable
 {
 public:
     friend connectable;
@@ -1227,8 +1204,7 @@ struct transformed_source_args<std::tuple<Args...>, Transformations...>
 
 template<source_like Source, class... Transformations>
     requires(valid_transformations<Source, Transformations...>)
-class transformed_source: public source,
-                          public connectable
+class transformed_source: public connectable
 {
 public:
     friend connectable;
@@ -1250,14 +1226,8 @@ private:
         return [callable = std::forward<Callable>(callable),
                 transformations = m_transformations]<class... Args>(Args&&... args) mutable
         {
-            return [&callable, &transformations]<std::size_t... Indexes>(
-                       const std::index_sequence<Indexes...>&,
-                       Args&&... args) mutable
-            {
-                return partial_call(
-                    callable,
-                    std::get<Indexes>(transformations)(std::forward<Args>(args))...);
-            }(index_sequence, std::forward<Args>(args)...);
+            auto& [... tranformationsCallable] { transformations };
+            return partial_call(callable, tranformationsCallable(std::forward<Args>(args))...);
         };
     }
 
@@ -1290,15 +1260,20 @@ public:
             sizeof...(Transformations)>
             index_sequence {};
 
-        static constexpr auto identites { []<std::size_t... Indexes>(
-                                              const std::index_sequence<Indexes...>&) constexpr
-        { return std::make_tuple(identity<Indexes> {}...); }(index_sequence) };
+        auto [... identities] { create_identities(index_sequence) };
+        auto& [... transformations] { m_transformations };
 
         return transformed_source { std::forward<Source>(origin),
-                                    std::tuple_cat(m_transformations, identites) };
+                                    std::make_tuple(transformations..., identities...) };
     }
 
 private:
+    template<std::size_t... Indexes>
+    static constexpr auto create_identities(const std::index_sequence<Indexes...>&)
+    {
+        return std::make_tuple(identity<Indexes> {}...);
+    }
+
     std::tuple<Transformations...> m_transformations;
 };
 
@@ -1317,8 +1292,7 @@ concept valid_filter = requires {
 template<source_like Source,
          partially_tuple_callable<typename std::remove_cvref_t<Source>::args> Filter>
     requires valid_filter<Source, Filter>
-class filtered_source: public source,
-                       public connectable
+class filtered_source: public connectable
 {
 public:
     friend connectable;
@@ -1714,36 +1688,47 @@ auto emitter::signal<Args...>::connect_once(Result (Receiver::*callable)(MemberF
 }
 
 // ### connect class
+template<class Callable, execution_policy Policy>
+class connect_base
+{
+public:
+    connect_base(Callable&& callable, Policy&& policy):
+        m_callable { std::forward<Callable>(callable) },
+        m_policy { std::forward<Policy>(policy) }
+    {
+    }
+
+protected:
+    std::decay_t<Callable> m_callable;
+    std::remove_reference_t<Policy> m_policy;
+};
 
 template<class Callable, execution_policy Policy>
-class connect<Callable, void, Policy>
+class connect<Callable, void, Policy>: public connect_base<Callable, Policy>
 {
 public:
     connect(Callable&& callable, Policy&& policy = {}):
-        m_callable { std::forward<Callable>(callable) },
-        m_policy { std::forward<Policy>(policy) }
+        connect_base<Callable, Policy> { std::forward<Callable>(callable),
+                                         std::forward<Policy>(policy) }
     {
     }
 
     template<source_like Source>
     auto create_connection(Source&& origin) -> connection
     {
-        return origin.connect(m_callable, m_policy);
+        return origin.connect(connect_base<Callable, Policy>::m_callable,
+                              connect_base<Callable, Policy>::m_policy);
     }
-
-private:
-    std::decay_t<Callable> m_callable;
-    std::remove_reference_t<Policy> m_policy;
 };
 
 template<class Callable, class Guard, execution_policy Policy>
     requires std::derived_from<Guard, receiver>
-class connect<Callable, Guard, Policy>
+class connect<Callable, Guard, Policy>: public connect_base<Callable, Policy>
 {
 public:
     connect(Callable&& callable, const Guard& guard, Policy&& policy = {}):
-        m_callable { std::forward<Callable>(callable) },
-        m_policy { std::forward<Policy>(policy) },
+        connect_base<Callable, Policy> { std::forward<Callable>(callable),
+                                         std::forward<Policy>(policy) },
         m_guard { guard }
     {
     }
@@ -1751,23 +1736,24 @@ public:
     template<source_like Source>
     auto create_connection(Source&& origin) -> connection
     {
-        return origin.connect(m_callable, m_guard, m_policy);
+        return origin.connect(connect_base<Callable, Policy>::m_callable,
+                              m_guard,
+                              connect_base<Callable, Policy>::m_policy);
     }
 
 private:
-    std::decay_t<Callable> m_callable;
-    std::remove_reference_t<Policy> m_policy;
     const Guard& m_guard;
 };
 
 template<class Result, class... Args, class Guard, execution_policy Policy>
     requires std::derived_from<Guard, receiver>
 class connect<Result (Guard::*)(Args...), Guard, Policy>
+    : public connect_base<Result (Guard::*)(Args...), Policy>
 {
 public:
     connect(Result (Guard::*callable)(Args...), Guard& guard, Policy&& policy = {}):
-        m_callable { callable },
-        m_policy { std::forward<Policy>(policy) },
+        connect_base<Result (Guard::*)(Args...), Policy>(std::move(callable),
+                                                         std::forward<Policy>(policy)),
         m_guard { guard }
     {
     }
@@ -1775,23 +1761,24 @@ public:
     template<source_like Source>
     auto create_connection(Source&& origin) -> connection
     {
-        return origin.connect(m_callable, m_guard, m_policy);
+        return origin.connect(connect_base<Result (Guard::*)(Args...), Policy>::m_callable,
+                              m_guard,
+                              connect_base<Result (Guard::*)(Args...), Policy>::m_policy);
     }
 
 private:
-    Result (Guard::*m_callable)(Args...);
-    std::remove_reference_t<Policy> m_policy;
     Guard& m_guard;
 };
 
 template<class Result, class... Args, class Guard, execution_policy Policy>
     requires std::derived_from<Guard, receiver>
 class connect<Result (Guard::*)(Args...) const, const Guard, Policy>
+    : public connect_base<Result (Guard::*)(Args...) const, Policy>
 {
 public:
     connect(Result (Guard::*callable)(Args...) const, const Guard& guard, Policy&& policy = {}):
-        m_callable { callable },
-        m_policy { std::forward<Policy>(policy) },
+        connect_base<Result (Guard::*)(Args...) const, Policy>(std::move(callable),
+                                                               std::forward<Policy>(policy)),
         m_guard { guard }
     {
     }
@@ -1799,12 +1786,12 @@ public:
     template<source_like Source>
     auto create_connection(Source&& origin) -> connection
     {
-        return origin.connect(m_callable, m_guard, m_policy);
+        return origin.connect(connect_base<Result (Guard::*)(Args...) const, Policy>::m_callable,
+                              m_guard,
+                              connect_base<Result (Guard::*)(Args...) const, Policy>::m_callable);
     }
 
 private:
-    Result (Guard::*m_callable)(Args...) const;
-    std::remove_reference_t<Policy> m_policy;
     const Guard& m_guard;
 };
 

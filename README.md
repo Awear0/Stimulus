@@ -906,7 +906,7 @@ auto main() -> int
 ### Custom transformations
 
 Custom transformations can be implemented.
-They must follow this pattern:
+They must inherit the chainable class, and have an accept method:
 
 ```
 class my_transformation: public chainable
@@ -924,8 +924,7 @@ and the resulting type of the accept call must follow this pattern:
 
 ```
 template<source_like Source>
-class transformation_result: public source,
-                        public connectable
+class transformation_result: public connectable
 {
 public:
     friend connectable;
@@ -954,7 +953,7 @@ private:
 ```
 
 The resulting type must:
-    - inherits source and connectable;
+    - inherits connectable;
     - have an args public alias that is a tuple of the resulting signal parameters
     - have a method accessible to connectable named `forwarding lambda` that must take a Callable appliable to the transformed signal, and return a Callable accepting the input signal parameters, and applying the transformation of the signal.
 
