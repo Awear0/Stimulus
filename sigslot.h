@@ -1,6 +1,7 @@
 #ifndef SIGSLOT_H_
 #define SIGSLOT_H_
 
+#include <atomic>
 #include <concepts>
 #include <cstddef>
 #include <exception>
@@ -36,7 +37,7 @@ namespace details
         template<std::invocable Invocable>
         void execute(Invocable&& invocable) const
         {
-            invocable();
+            std::forward<Invocable>(invocable)();
         }
 
         static constexpr bool is_synchronous { true };
@@ -56,7 +57,7 @@ namespace details
         : public execution_policy_holder_implementation_interface
     {
     public:
-        execution_policy_holder_implementation(Policy&& policy):
+        explicit execution_policy_holder_implementation(Policy&& policy):
             m_policy { std::forward<Policy>(policy) }
         {
         }
@@ -80,7 +81,7 @@ namespace details
         template<std::invocable Callable>
         struct policy_visitor_executor
         {
-            policy_visitor_executor(Callable&& callable):
+            explicit policy_visitor_executor(Callable&& callable):
                 m_callable { std::forward<Callable>(callable) }
             {
             }
@@ -96,12 +97,13 @@ namespace details
                 policy->execute(std::forward<Callable>(m_callable));
             }
 
+        private:
             Callable&& m_callable;
         };
 
         struct policy_visitor_synchronicity_checker
         {
-            static auto constexpr operator()(const synchronous_policy& policy) -> bool
+            static auto constexpr operator()(const synchronous_policy&) -> bool
             {
                 return synchronous_policy::is_synchronous;
             }
@@ -117,18 +119,13 @@ namespace details
         static constexpr policy_visitor_synchronicity_checker synchronicity_checker {};
 
     public:
-        execution_policy_holder(const synchronous_policy& policy):
+        explicit execution_policy_holder(const synchronous_policy& policy):
             m_policy { policy }
         {
         }
 
-        execution_policy_holder(synchronous_policy&& policy):
-            m_policy { std::move(policy) }
-        {
-        }
-
         template<execution_policy Policy>
-        execution_policy_holder(Policy&& policy):
+        explicit execution_policy_holder(Policy&& policy):
             m_policy { std::make_unique<execution_policy_holder_implementation<Policy>>(
                 std::forward<Policy>(policy)) }
         {
@@ -250,8 +247,7 @@ namespace details
         }
         else
         {
-            auto args_tuple { std::forward_as_tuple(std::forward<Args>(args)...) };
-            auto&& [... first_args, last] { args_tuple };
+            auto&& [... first_args, last] { std::forward_as_tuple(std::forward<Args>(args)...) };
             return partial_call(std::forward<Callable>(callable),
                                 std::forward<decltype(first_args)>(first_args)...);
         }
@@ -513,7 +509,7 @@ namespace details
         template<::source_like Self, appliable<Self> Appliable>
         auto apply(this Self&& self, Appliable&& appliable)
         {
-            return appliable.accept(std::forward<Self>(self));
+            return std::forward<Appliable>(appliable).accept(std::forward<Self>(self));
         }
 
         template<::source_like Self, appliable<Self> Appliable>
@@ -589,15 +585,10 @@ public:
 class connection
 {
 public:
-    connection(std::weak_ptr<emitter::connection_holder> weak_holder):
+    explicit connection(std::weak_ptr<emitter::connection_holder> weak_holder):
         m_holder { std::move(weak_holder) }
     {
     }
-
-    connection(const connection&) = default;
-    connection(connection&&) = default;
-    auto operator=(const connection&) -> connection& = default;
-    auto operator=(connection&&) -> connection& = default;
 
     void disconnect()
     {
@@ -655,21 +646,21 @@ private:
 class scoped_connection
 {
 public:
-    scoped_connection(connection conn):
+    explicit scoped_connection(connection conn):
         m_connection { std::move(conn) }
     {
     }
 
     scoped_connection(const scoped_connection&) = delete;
 
-    scoped_connection(scoped_connection&& other):
+    scoped_connection(scoped_connection&& other) noexcept:
         m_connection { std::move(other.m_connection) }
     {
     }
 
     auto operator=(const scoped_connection&) -> scoped_connection& = delete;
 
-    auto operator=(scoped_connection&& other) -> scoped_connection&
+    auto operator=(scoped_connection&& other) noexcept -> scoped_connection&
     {
         m_connection = std::move(other.m_connection);
         return *this;
@@ -697,11 +688,17 @@ private:
 class inhibitor
 {
 public:
-    inhibitor(connection conn):
+    explicit inhibitor(connection conn):
         m_connection { std::move(conn) }
     {
         m_connection.suspend();
     }
+
+    inhibitor(const inhibitor&) = default;
+    inhibitor(inhibitor&&) = default;
+
+    auto operator=(const inhibitor&) -> inhibitor& = default;
+    auto operator=(inhibitor&&) -> inhibitor& = default;
 
     ~inhibitor()
     {
@@ -723,12 +720,14 @@ namespace details
         friend class emitter::signal;
 
         guard() = default;
+        ~guard() = default;
 
-        guard(const guard& other) {
+        guard(const guard&)
+        {
             // Empty on purpose
-        };
+        }
 
-        guard(guard&& other)
+        guard(guard&&) noexcept
         {
             // Nothing on purpose
         }
@@ -739,7 +738,7 @@ namespace details
             return *this;
         }
 
-        auto operator=(guard&&) -> guard&
+        auto operator=(guard&&) noexcept -> guard&
         {
             // Nothing on purpose
             return *this;
@@ -758,7 +757,8 @@ namespace details
             m_emitting_sources.emplace_back(std::move(source));
         }
 
-        mutable std::vector<scoped_connection> m_emitting_sources {};
+    private:
+        mutable std::vector<scoped_connection> m_emitting_sources;
         mutable std::mutex m_mutex;
     };
 
@@ -781,8 +781,9 @@ public:
              details::execution_policy Policy = details::synchronous_policy>
     auto connect(this Self&& self, Callable&& callable, Policy&& policy = {}) -> connection
     {
-        return self.m_source.connect(self.forwarding_lambda(std::forward<Callable>(callable)),
-                                     std::forward<Policy>(policy));
+        return std::forward<Self>(self).m_source.connect(
+            std::forward<Self>(self).forwarding_lambda(std::forward<Callable>(callable)),
+            std::forward<Policy>(policy));
     }
 
     template<class Self,
@@ -790,8 +791,9 @@ public:
              details::execution_policy Policy = details::synchronous_policy>
     auto connect_once(this Self&& self, Callable&& callable, Policy&& policy = {}) -> connection
     {
-        return self.m_source.connect_once(self.forwarding_lambda(std::forward<Callable>(callable)),
-                                          std::forward<Policy>(policy));
+        return std::forward<Self>(self).m_source.connect_once(
+            std::forward<Self>(self).forwarding_lambda(std::forward<Callable>(callable)),
+            std::forward<Policy>(policy));
     }
 
     template<class Self,
@@ -801,9 +803,10 @@ public:
     auto connect(this Self&& self, Callable&& callable, const Receiver& guard, Policy&& policy = {})
         -> connection
     {
-        return self.m_source.connect(self.forwarding_lambda(std::forward<Callable>(callable)),
-                                     guard,
-                                     std::forward<Policy>(policy));
+        return std::forward<Self>(self).m_source.connect(
+            std::forward<Self>(self).forwarding_lambda(std::forward<Callable>(callable)),
+            guard,
+            std::forward<Policy>(policy));
     }
 
     template<class Self,
@@ -815,9 +818,10 @@ public:
                       const Receiver& guard,
                       Policy&& policy = {}) -> connection
     {
-        return self.m_source.connect_once(self.forwarding_lambda(std::forward<Callable>(callable)),
-                                          guard,
-                                          std::forward<Policy>(policy));
+        return std::forward<Self>(self).m_source.connect_once(
+            std::forward<Self>(self).forwarding_lambda(std::forward<Callable>(callable)),
+            guard,
+            std::forward<Policy>(policy));
     }
 
     template<class Self,
@@ -830,8 +834,9 @@ public:
                  Receiver& guard,
                  Policy&& policy = {}) -> connection
     {
-        return self.m_source.connect(
-            self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
+        return std::forward<Self>(self).m_source.connect(
+            std::forward<Self>(self).forwarding_lambda(
+                [&guard, callable]<class... Args>(Args&&... args) mutable
         { partial_call(callable, guard, std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
@@ -847,8 +852,9 @@ public:
                       Receiver& guard,
                       Policy&& policy = {}) -> connection
     {
-        return self.m_source.connect_once(
-            self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
+        return std::forward<Self>(self).m_source.connect_once(
+            std::forward<Self>(self).forwarding_lambda(
+                [&guard, callable]<class... Args>(Args&&... args) mutable
         { partial_call(callable, guard, std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
@@ -864,8 +870,9 @@ public:
                  const Receiver& guard,
                  Policy&& policy = {}) -> connection
     {
-        return self.m_source.connect(
-            self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
+        return std::forward<Self>(self).m_source.connect(
+            std::forward<Self>(self).forwarding_lambda(
+                [&guard, callable]<class... Args>(Args&&... args) mutable
         { partial_call(callable, guard, std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
@@ -881,8 +888,9 @@ public:
                       const Receiver& guard,
                       Policy&& policy = {}) -> connection
     {
-        return self.m_source.connect_once(
-            self.forwarding_lambda([&guard, callable]<class... Args>(Args&&... args) mutable
+        return std::forward<Self>(self).m_source.connect_once(
+            std::forward<Self>(self).forwarding_lambda(
+                [&guard, callable]<class... Args>(Args&&... args) mutable
         { partial_call(callable, guard, std::forward<Args>(args)...); }),
             guard,
             std::forward<Policy>(policy));
@@ -904,7 +912,7 @@ public:
         // Nothing on purpose
     }
 
-    signal(signal&&)
+    signal(signal&&) noexcept
     {
         // Nothing on purpose
     }
@@ -913,9 +921,9 @@ public:
     {
         // Nothing on purpose
         return *this;
-    };
+    }
 
-    auto operator=(signal&&) -> signal&
+    auto operator=(signal&&) noexcept -> signal&
     {
         // Nothing on purpose
         return *this;
@@ -1073,7 +1081,7 @@ namespace details
         template<source_like Source>
         friend auto operator|(Source&& source, chain& chain)
         {
-            return source | chain.m_chainable | chain.m_connect;
+            return std::forward<Source>(source) | chain.m_chainable | chain.m_connect;
         }
 
     private:
@@ -1099,7 +1107,7 @@ namespace details
         template<source_like Source>
         friend auto operator|(Source&& source, chain& chain)
         {
-            return source | chain.m_chainable | chain.m_connect_result;
+            return std::forward<Source>(source) | chain.m_chainable | chain.m_connect_result;
         }
 
     private:
@@ -1153,8 +1161,9 @@ namespace details
         template<source_like Source>
         friend auto operator|(Source&& source, composed_chainable& composed_chainable)
         {
-            return (source | composed_chainable.m_lhs) | composed_chainable.m_rhs;
-        };
+            return (std::forward<Source>(source) | composed_chainable.m_lhs) |
+                   composed_chainable.m_rhs;
+        }
 
     private:
         Lhs m_lhs;
@@ -1190,7 +1199,7 @@ namespace details
         using args = std::tuple<
             std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>...>;
 
-        mapped_source(Source&& origin):
+        explicit mapped_source(Source&& origin):
             m_source { std::forward<Source>(origin) }
         {
         }
@@ -1203,11 +1212,8 @@ namespace details
             return
                 [callable = std::forward<Callable>(callable)]<class... Args>(Args&&... args) mutable
             {
-                partial_call(
-                    callable,
-                    std::forward<
-                        std::tuple_element_t<Indexes, typename std::remove_cvref_t<Source>::args>>(
-                        args...[Indexes])...);
+                partial_call(callable,
+                             std::forward<decltype(args...[Indexes])>(args...[Indexes])...);
             };
         }
 
@@ -1223,7 +1229,7 @@ public:
     template<source_like Source>
     auto accept(Source&& origin) -> details::mapped_source<Source, Indexes...>
     {
-        return { std::forward<Source>(origin) };
+        return details::mapped_source<Source, Indexes...> { std::forward<Source>(origin) };
     }
 };
 
@@ -1284,12 +1290,11 @@ namespace details
         template<partially_tuple_callable<args> Callable>
         auto forwarding_lambda(Callable&& callable) const
         {
-            static constexpr std::make_index_sequence<sizeof...(Transformations)> index_sequence {};
             return [callable = std::forward<Callable>(callable),
                     transformations = m_transformations]<class... Args>(Args&&... args) mutable
             {
-                auto& [... tranformationsCallable] { transformations };
-                return partial_call(callable, tranformationsCallable(std::forward<Args>(args))...);
+                auto& [... transformationsCallable] { transformations };
+                return partial_call(callable, transformationsCallable(std::forward<Args>(args))...);
             };
         }
 
@@ -1310,7 +1315,7 @@ private:
     using identity = std::identity;
 
 public:
-    transform(Transformations... transformations):
+    explicit transform(Transformations... transformations):
         m_transformations { std::forward<Transformations>(transformations)... }
     {
     }
@@ -1393,7 +1398,7 @@ template<class Filter>
 class filter: public chainable
 {
 public:
-    filter(Filter filter):
+    explicit filter(Filter filter):
         m_filter { std::move(filter) }
     {
     }
@@ -1449,7 +1454,7 @@ public:
         requires std::invocable<signal::slot, EmittedArgs...>
     void operator()(EmittedArgs&&... args)
     {
-        if (m_suspended)
+        if (m_suspended.load(std::memory_order_relaxed))
         {
             return;
         }
@@ -1501,7 +1506,7 @@ public:
     void disconnect() override
     {
         m_signal.disconnect(this);
-        if (m_guard)
+        if (m_guard != nullptr)
         {
             guard* guard { nullptr };
             std::swap(guard, m_guard);
@@ -1511,12 +1516,12 @@ public:
 
     void suspend() override
     {
-        m_suspended = true;
+        m_suspended.store(true, std::memory_order_relaxed);
     }
 
     void resume() override
     {
-        m_suspended = false;
+        m_suspended.store(false, std::memory_order_relaxed);
     }
 
     void add_exception_handler(emitter::connection_holder::exception_handler handler) override
@@ -1546,7 +1551,7 @@ private:
     const signal& m_signal;
     guard* m_guard { nullptr };
     details::execution_policy_holder m_policy;
-    bool m_suspended { false };
+    std::atomic<bool> m_suspended { false };
     bool m_single_shot;
 };
 
@@ -1563,8 +1568,9 @@ auto emitter::connect(this const Receiver& self,
                       signal<ReceiverArgs...> Receiver::* receiver_signal,
                       Policy&& policy) -> connection
 {
-    auto connection { emitter.connect(self.forwarding_lambda(receiver_signal),
-                                      std::forward<Policy>(policy)) };
+    auto connection { std::forward<Emitter>(emitter).connect(
+        self.forwarding_lambda(receiver_signal),
+        std::forward<Policy>(policy)) };
     (self.*receiver_signal).add_emitting_source(connection);
     return connection;
 }
@@ -1580,8 +1586,9 @@ auto emitter::connect_once(this const Receiver& self,
                            signal<ReceiverArgs...> Receiver::* receiver_signal,
                            Policy&& policy) -> connection
 {
-    auto connection { emitter.connect_once(self.forwarding_lambda(receiver_signal),
-                                           std::forward<Policy>(policy)) };
+    auto connection { std::forward<Emitter>(emitter).connect_once(
+        self.forwarding_lambda(receiver_signal),
+        std::forward<Policy>(policy)) };
     (self.*receiver_signal).add_emitting_source(connection);
     return connection;
 }
@@ -1628,7 +1635,7 @@ auto emitter::signal<Args...>::connect_impl(Callable&& callable,
                                                            std::forward<Policy>(policy),
                                                            connect_once));
 
-    return { m_slots.back() };
+    return connection { m_slots.back() };
 }
 
 template<details::signal_arg... Args>
@@ -1785,7 +1792,7 @@ template<class Callable, details::execution_policy Policy>
 class connect<Callable, void, Policy>: public details::connect_base<Callable, Policy>
 {
 public:
-    connect(Callable&& callable, Policy&& policy = {}):
+    explicit connect(Callable&& callable, Policy&& policy = {}):
         details::connect_base<Callable, Policy> { std::forward<Callable>(callable),
                                                   std::forward<Policy>(policy) }
     {
@@ -1794,8 +1801,9 @@ public:
     template<source_like Source>
     auto create_connection(Source&& origin) -> connection
     {
-        return origin.connect(details::connect_base<Callable, Policy>::m_callable,
-                              details::connect_base<Callable, Policy>::m_policy);
+        return std::forward<Source>(origin).connect(
+            details::connect_base<Callable, Policy>::m_callable,
+            details::connect_base<Callable, Policy>::m_policy);
     }
 };
 
@@ -1814,9 +1822,10 @@ public:
     template<source_like Source>
     auto create_connection(Source&& origin) -> connection
     {
-        return origin.connect(details::connect_base<Callable, Policy>::m_callable,
-                              m_guard,
-                              details::connect_base<Callable, Policy>::m_policy);
+        return std::forward<Source>(origin).connect(
+            details::connect_base<Callable, Policy>::m_callable,
+            m_guard,
+            details::connect_base<Callable, Policy>::m_policy);
     }
 
 private:
@@ -1839,9 +1848,10 @@ public:
     template<source_like Source>
     auto create_connection(Source&& origin) -> connection
     {
-        return origin.connect(details::connect_base<Result (Guard::*)(Args...), Policy>::m_callable,
-                              m_guard,
-                              details::connect_base<Result (Guard::*)(Args...), Policy>::m_policy);
+        return std::forward<Source>(origin).connect(
+            details::connect_base<Result (Guard::*)(Args...), Policy>::m_callable,
+            m_guard,
+            details::connect_base<Result (Guard::*)(Args...), Policy>::m_policy);
     }
 
 private:
@@ -1865,10 +1875,10 @@ public:
     template<source_like Source>
     auto create_connection(Source&& origin) -> connection
     {
-        return origin.connect(
+        return std::forward<Source>(origin).connect(
             details::connect_base<Result (Guard::*)(Args...) const, Policy>::m_callable,
             m_guard,
-            details::connect_base<Result (Guard::*)(Args...) const, Policy>::m_callable);
+            details::connect_base<Result (Guard::*)(Args...) const, Policy>::m_policy);
     }
 
 private:

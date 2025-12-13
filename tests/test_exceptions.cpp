@@ -35,52 +35,57 @@ protected:
     storing_policy policy;
 };
 
-void int_throwing_function()
+namespace
 {
-    throw int { 5 };
-}
 
-void runtime_error_throwing_function()
-{
-    throw std::runtime_error { "Test" };
-}
-
-int int_caught { 0 };
-int runtime_error_caught { 0 };
-int something_else_caught { 0 };
-
-void reset_counters()
-{
-    int_caught = 0;
-    runtime_error_caught = 0;
-    something_else_caught = 0;
-}
-
-void catching_handler(std::exception_ptr exception)
-{
-    try
+    void int_throwing_function()
     {
-        std::rethrow_exception(exception);
+        throw 5;
     }
-    catch (int& i)
+
+    void runtime_error_throwing_function()
     {
-        if (i == 5)
+        throw std::runtime_error { "Test" };
+    }
+
+    int int_caught { 0 };
+    int runtime_error_caught { 0 };
+    int something_else_caught { 0 };
+
+    void reset_counters()
+    {
+        int_caught = 0;
+        runtime_error_caught = 0;
+        something_else_caught = 0;
+    }
+
+    void catching_handler(std::exception_ptr exception)
+    {
+        try
         {
-            ++int_caught;
+            std::rethrow_exception(std::move(exception));
+        }
+        catch (int& i)
+        {
+            if (i == 5)
+            {
+                ++int_caught;
+            }
+        }
+        catch (std::runtime_error& e)
+        {
+            if (e.what() == std::string("Test"))
+            {
+                ++runtime_error_caught;
+            }
+        }
+        catch (...)
+        {
+            ++something_else_caught;
         }
     }
-    catch (std::runtime_error& e)
-    {
-        if (e.what() == std::string("Test"))
-        {
-            ++runtime_error_caught;
-        }
-    }
-    catch (...)
-    {
-        ++something_else_caught;
-    }
-}
+
+} // namespace
 
 TEST_F(exceptions_test, int_thrower)
 {

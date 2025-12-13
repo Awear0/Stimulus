@@ -16,8 +16,8 @@ protected:
     generic_emitter<copy_move_counter> copy_move_emitter;
     generic_emitter<int&> int_ref_emitter;
 
-    static constexpr auto always_true { []<class... Args>(Args&&... args) { return true; } };
-    static constexpr auto always_false { []<class... Args>(Args&&... args) { return false; } };
+    static constexpr auto always_true { []<class... Args>(Args&&...) { return true; } };
+    static constexpr auto always_false { []<class... Args>(Args&&...) { return false; } };
 };
 
 TEST_F(test_filter, always_true)

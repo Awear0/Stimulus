@@ -273,7 +273,7 @@ TEST_F(custom_policy_connect_emit, emit_ref)
     int ref { 0 };
 
     int_ref_emitter.generic_signal.connect(
-        [&count](int& value)
+        [](int& value)
     {
         value = 45;
         count++;

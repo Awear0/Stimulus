@@ -185,7 +185,7 @@ TEST_F(basic_connect_emit, emit_ref)
 
     int ref { 0 };
 
-    int_ref_emitter.generic_signal.connect([&count](int& value)
+    int_ref_emitter.generic_signal.connect([](int& value)
     {
         value = 45;
         count++;

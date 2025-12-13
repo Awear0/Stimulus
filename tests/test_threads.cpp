@@ -1,7 +1,5 @@
 #include "../sigslot.h"
 
-#include <string>
-
 #include <gtest/gtest.h>
 #include <thread>
 
@@ -16,7 +14,7 @@ protected:
 template<std::size_t Count>
 void create_connections(generic_emitter<>& empty)
 {
-    for (int i = 0; i < Count; ++i)
+    for (std::size_t i = 0; i < Count; ++i)
     {
         empty.generic_signal.connect(slot_function<>);
     }
@@ -46,9 +44,6 @@ TEST_F(test_threads, many_connections)
 
 TEST_F(test_threads, many_connections_many_emits)
 {
-    int& count = call_count<>;
-    reset<>();
-
     std::thread t1 { create_connections<1000>, std::ref(empty_emitter) };
     std::thread t2 { create_connections<1000>, std::ref(empty_emitter) };
     std::thread t3 { create_connections<1000>, std::ref(empty_emitter) };
