@@ -98,6 +98,8 @@ namespace details
             }
 
         private:
+            // It might be bad, but this is done on purpose.
+            // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
             Callable&& m_callable;
         };
 
@@ -518,6 +520,11 @@ namespace details
 
         auto operator=(const unsafe_weak_pointer& other) -> unsafe_weak_pointer&
         {
+            if (&other == this)
+            {
+                return *this;
+            }
+
             release();
 
             m_holder = other.m_holder;
@@ -559,7 +566,7 @@ namespace details
     private:
         void increase()
         {
-            if (m_holder)
+            if (m_holder != nullptr)
             {
                 ++m_holder->weak_count;
             }
@@ -682,6 +689,8 @@ namespace details
             typename std::remove_cvref_t<Source>::connection_type;
 
     private:
+        // It might be bad, but this is done on purpose.
+        // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
         const Receiver& m_receiver;
         Signal Receiver::* m_receiver_signal;
         Policy m_policy;
@@ -1020,6 +1029,8 @@ template<template<class> class SharedPointer>
 class scoped_connection
 {
 public:
+    // Not explicit on purpose to allow scoped_connection = object.signal.connect(slot);
+    // NOLINTNEXTLINE(google-explicit-constructor)
     scoped_connection(connection<SharedPointer> conn):
         m_connection { std::move(conn) }
     {
@@ -1598,6 +1609,8 @@ namespace details
         auto forwarding_lambda(Callable&& callable) const
         {
             return
+                // Clang-tidy doesn't seem to understand template parameter pack indexing.
+                // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
                 [callable = std::forward<Callable>(callable)]<class... Args>(Args&&... args) mutable
             {
                 partial_call(callable,
@@ -1938,6 +1951,8 @@ namespace details
         signal::slot m_slot;
         std::vector<exception_handler> m_exception_handlers;
         mutable Mutex m_mutex;
+        // It might be bad, but this is done on purpose.
+        // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
         const signal& m_signal;
         guard<Mutex, SharedPointer>* m_guard { nullptr };
         execution_policy_holder m_policy;
@@ -2208,7 +2223,11 @@ namespace details
         }
 
     protected:
+        // It might be bad, but this is done on purpose.
+        // NOLINTNEXTLINE(misc-non-private-member-variables-in-classes)
         std::decay_t<Callable> m_callable;
+        // It might be bad, but this is done on purpose.
+        // NOLINTNEXTLINE(misc-non-private-member-variables-in-classes)
         std::remove_reference_t<Policy> m_policy;
     };
 } // namespace details
@@ -2253,6 +2272,8 @@ public:
     }
 
 private:
+    // It might be bad, but this is done on purpose.
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
     const Guard& m_guard;
 };
 
@@ -2278,6 +2299,8 @@ public:
     }
 
 private:
+    // It might be bad, but this is done on purpose.
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
     Guard& m_guard;
 };
 
@@ -2304,6 +2327,8 @@ public:
     }
 
 private:
+    // It might be bad, but this is done on purpose.
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
     const Guard& m_guard;
 };
 
