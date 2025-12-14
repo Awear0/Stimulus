@@ -308,6 +308,13 @@ namespace details
         { pointer.get() } -> std::same_as<int*>;
     };
 
+    struct pointer_holder
+    {
+        void* pointer { nullptr };
+        std::size_t count { 0 };
+        std::size_t weak_count { 0 };
+    };
+
     template<class T>
     class unsafe_weak_pointer;
 
@@ -330,7 +337,7 @@ namespace details
 
         explicit unsafe_shared_pointer(T* pointer):
             m_holder {
-                new pointer_holder { .pointer = pointer, .count = 1 }
+                new pointer_holder { .pointer = static_cast<void*>(pointer), .count = 1 }
         }
         {
         }
@@ -370,7 +377,7 @@ namespace details
 
             release();
 
-            m_holder = std::move(other.m_holder);
+            m_holder = other.m_holder;
             other.m_holder = nullptr;
 
             return *this;
@@ -408,7 +415,7 @@ namespace details
 
         auto operator*() const -> T&
         {
-            return *m_holder->pointer;
+            return *static_cast<T*>(m_holder->pointer);
         }
 
         auto get() const -> T*
@@ -418,7 +425,7 @@ namespace details
                 return nullptr;
             }
 
-            return m_holder->pointer;
+            return static_cast<T*>(m_holder->pointer);
         }
 
         auto operator->() const -> T*
@@ -435,25 +442,20 @@ namespace details
             requires std::derived_from<T, Base>
         explicit operator unsafe_shared_pointer<Base>()
         {
-            // TODO AROSS
-            return unsafe_shared_pointer<Base> {
-                reinterpret_cast<unsafe_shared_pointer<Base>::pointer_holder*>(m_holder)
-            };
+            return unsafe_shared_pointer<Base> { m_holder };
         }
 
         template<class Base>
             requires std::derived_from<T, Base>
         explicit operator unsafe_weak_pointer<Base>()
         {
-            // TODO AROSS
-            return unsafe_weak_pointer<Base> { unsafe_shared_pointer<Base> {
-                reinterpret_cast<unsafe_shared_pointer<Base>::pointer_holder*>(m_holder) } };
+            return unsafe_weak_pointer<Base> { unsafe_shared_pointer<Base> { m_holder } };
         }
 
     private:
         void increase()
         {
-            if (m_holder)
+            if (m_holder != nullptr)
             {
                 ++m_holder->count;
             }
@@ -469,7 +471,7 @@ namespace details
             --m_holder->count;
             if (m_holder->count == 0)
             {
-                delete m_holder->pointer;
+                delete get();
                 m_holder->pointer = nullptr;
 
                 if (m_holder->weak_count == 0)
@@ -479,13 +481,6 @@ namespace details
                 }
             }
         }
-
-        struct pointer_holder
-        {
-            T* pointer { nullptr };
-            std::size_t count { 0 };
-            std::size_t weak_count { 0 };
-        };
 
         explicit unsafe_shared_pointer(pointer_holder* holder):
             m_holder { holder }
@@ -573,7 +568,7 @@ namespace details
             }
         }
 
-        unsafe_shared_pointer<T>::pointer_holder* m_holder { nullptr };
+        pointer_holder* m_holder { nullptr };
     };
 
 } // namespace details
@@ -620,14 +615,22 @@ namespace details
              template<class> class SharedPointer = details::unsafe_shared_pointer>
         requires details::shared_pointer_like<SharedPointer>
     class guard;
+
+    template<class Instance>
+    concept instance_of_source = requires(Instance instance) {
+        []<template<class> class SharedPointer>(const source<SharedPointer>&)
+            requires shared_pointer_like<SharedPointer>
+        {
+
+        }(instance);
+    };
 } // namespace details
 
 // TODO AROSS: Complete
 template<class Source>
 concept source_like =
     requires(const Source& source, typename std::remove_cvref_t<Source>::args tuple) {
-        // TODO
-        // std::derived_from<std::remove_cvref_t<Source>, details::source>;
+        details::instance_of_source<std::remove_cvref_t<Source>>;
         details::is_tuple<typename std::remove_cvref_t<Source>::args>;
         {
             []<class... Args>(const std::tuple<Args...>&)
@@ -882,8 +885,8 @@ namespace details
                  class Receiver,
                  signal_like<Receiver> Signal,
                  execution_policy Policy>
-        /*requires partially_tuple_callable<std::function<void(ReceiverArgs...)>,
-                                          typename std::remove_cvref_t<Self>::args>*/
+            requires partially_tuple_callable<typename Signal::slot,
+                                              typename std::remove_cvref_t<Self>::args>
         auto operator|(
             this Self&& self,
             details::template forward_result<Receiver, Signal Receiver::*, Policy>& connect_result)
@@ -895,8 +898,8 @@ namespace details
                  class Receiver,
                  signal_like<Receiver> Signal,
                  execution_policy Policy>
-        /*requires partially_tuple_callable<std::function<void(ReceiverArgs...)>,
-                                          typename std::remove_cvref_t<Self>::args>*/
+            requires partially_tuple_callable<typename Signal::slot,
+                                              typename std::remove_cvref_t<Self>::args>
         auto operator|(
             this Self&& self,
             details::template forward_result<Receiver, Signal Receiver::*, Policy>&& connect_result)
@@ -1012,7 +1015,7 @@ template<template<class> class SharedPointer>
 class scoped_connection
 {
 public:
-    explicit scoped_connection(connection<SharedPointer> conn):
+    scoped_connection(connection<SharedPointer> conn):
         m_connection { std::move(conn) }
     {
     }

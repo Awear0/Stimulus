@@ -16,8 +16,8 @@ Sigslot allows to create Qt-style signal and connection:
 ```
 #include <iostream>
 
-// Inheriting emitter is required to access signals
-class thermometer: public emitter
+// Inheriting basic_emitter is required to access signals
+class thermometer: public basic_emitter
 {
 public:
     // Signal producing a double
@@ -54,9 +54,10 @@ auto main() -> int
 It allows to create Qt-style slots as well:
 
 ```
+
 #include <iostream>
 
-class thermometer: public emitter
+class thermometer: public basic_emitter
 {
 public:
     // Signal producing a double
@@ -69,8 +70,8 @@ public:
     }
 };
 
-// Inheriting receiver allows to automatically disconnect signals connected to the class.
-class temperature_printer: public receiver
+// Inheriting basic_receiver allows to automatically disconnect signals connected to the class.
+class temperature_printer: public basic_receiver
 {
 public:
     // Slots are simply methods
@@ -107,7 +108,7 @@ Finally, you can use the pipe operator to create reactive programming style conn
 ```
 #include <iostream>
 
-class thermometer: public emitter
+class thermometer: public basic_emitter
 {
 public:
     // Signal producing a double
@@ -120,7 +121,7 @@ public:
     }
 };
 
-class temperature_printer: public receiver
+class temperature_printer: public basic_receiver
 {
 public:
     // Slots are simply methods
@@ -196,10 +197,10 @@ Many more features are available in Sigslot, such as suspend/resume on signals, 
 
 ## Signals
 
-Signals are the main features of Sigslot. In order for a class to have signal members, it must inherit `emitter`.
+Signals are the main features of Sigslot. In order for a class to have signal members, it must inherit `basic_emitter`.
 
 ```
-class my_class: public emitter
+class my_class: public basic_emitter
 {
 };
 ```
@@ -209,7 +210,7 @@ Each signal is associated to a list of parameters, that are emitted along with t
 **Users must be careful when using lvalue references as signal parameters** and must ensure that the referenced objects remain valid until all connected slots have been invoked.
 
 ```
-class my_class: public emitter
+class my_class: public basic_emitter
 {
 public:
     // Empty signal
@@ -228,7 +229,7 @@ public:
 Signals can be emitted only from the class they're declared from, using the following syntax:
 
 ```
-class my_class: public emitter
+class my_class: public basic_emitter
 {
 public:
     signal<int, double, char, std::string> many_parameters_signal;
@@ -250,7 +251,7 @@ It must be noted that signals can be connected to and emitted even from a const 
 
 Signals have default copy/move constructor/assignment operators. The copy of a signal (and a moved signal) do not have any connections attached to it, even if the original signal had any.
 
-This is made to ensure that `emitter` inheriting classes can still have default constructors/assignment operators.
+This is made to ensure that `basic_emitter` inheriting classes can still have default constructors/assignment operators.
 
 ## Connections
 
@@ -269,7 +270,7 @@ public:
     }
 };
 
-class my_class: public emitter
+class my_class: public basic_emitter
 {
 public:
     signal<int> int_signal;
@@ -433,7 +434,10 @@ Slots are not required to return void, but any return value will be ignored. The
 
 ### Thread safety
 
-`connect`, `disconnect`, `add_exception_handler`, `suspend`, `resume` and `emit` functions are thread safe, even when called on the same connection or signal.
+basic_emitter and basic_receiver classes are not thread safe. 
+
+safe_emitter and safe_receiver classes are feature equivalent to basic_emitter and basic_receiver and provides thread safety for the following functions:
+`connect`, `disconnect`, `add_exception_handler`, `suspend`, `resume` and `emit` even when called on the same connection or signal.
 
 ### Slot call policy
 
@@ -444,7 +448,7 @@ By default, all slots are called synchronously. Custom execution policy for slot
 When connecting a slot to a signal, the connection is valid if the slot can be called with the parameters of the signal, **or can be called by dropping any number of parameters, starting from the end**.
 
 ```
-class my_class: public emitter
+class my_class: public basic_emitter
 {
 public:
     signal<int, std::string> int_signal;
@@ -480,14 +484,14 @@ auto main() -> int
 }
 ```
 
-One must note that if multiple calls are valid (with multiple number of parameters), the one with the highest count of parameters will be picked.
+One must note that if multiple calls are valid (with different number of parameters), the one with the highest count of parameters will be picked.
 
 ### Argument conversion
 
 Signal argument will be converted when possible before calling a slot:
 
 ```
-class my_class: public emitter
+class my_class: public basic_emitter
 {
 public:
     signal<int> int_signal;
@@ -516,7 +520,7 @@ If a signal emits a reference, it can be connected to a slot taking a reference,
 If a signal emits a value, it cannot be connected to a slot taking a reference. It can however be connected to a slot taking a const reference, or even an rvalue reference.
 
 ```
-class my_class: public emitter
+class my_class: public basic_emitter
 {
 public:
     signal<int> int_signal;
@@ -589,7 +593,7 @@ During an emission, slots are called in the order they were registered.
 To emit a signal, one must use the following syntax:
 
 ```
-class my_class: public emitter
+class my_class: public basic_emitter
 {
 public:
     signal<int> int_signal;
@@ -611,7 +615,7 @@ The source signal parameters must match the destination signal parameters, poten
 This must be done using the following syntax:
 
 ```
-class my_class: public emitter
+class my_class: public basic_emitter
 {
 public:
     signal<int> int_signal1;
@@ -641,7 +645,7 @@ Connection is disconnected whenever the object owning the destination signal is 
 The operator pipe (see later) can be used with signal forwarding using the following syntax:
 
 ```
-class my_class: public emitter
+class my_class: public basic_emitter
 {
 public:
     signal<int> int_signal1;
@@ -667,11 +671,11 @@ public:
 
 In order to ensure that connections are automatically disconnected (and thus avoid dangling references), a guard mechanism exists.
 
-This mechanism is implemented through the `receiver` class, which can be inherited from.
+This mechanism is implemented through the `basic_receiver` class, which can be inherited from.
 Any receiver inheriting object can be passed as a parameter of a connect call and act as a guard: the created connection will be automatically disconnected upon the guard destruction.
 
 ```
-class my_emitter: public emitter
+class my_emitter: public basic_emitter
 {
 public:
     signal<int> int_signal;
@@ -682,7 +686,7 @@ public:
     }
 };
 
-class my_receiver: public receiver
+class my_receiver: public basic_receiver
 {
 };
 
@@ -710,7 +714,7 @@ auto main() -> int
 Methods of a guard can also be used as slots, effectively calling the method on the guard object when the slot is called.
 
 ```
-class my_emitter: public emitter
+class my_emitter: public basic_emitter
 {
 public:
     signal<int> int_signal;
@@ -721,7 +725,7 @@ public:
     }
 };
 
-class my_receiver: public receiver
+class my_receiver: public basic_receiver
 {
 public:
     void empty_function()
@@ -753,7 +757,7 @@ auto main() -> int
 
 ### Copy and move semantics
 
-The `receiver` class has default copy/move constructor/assignment operator. Those methods are empty, and are just here to allow default copy/move operation on `receiver` inheriting classes. If a guard is destroyed after being copied/moved from, all the connections it's guarding will be invalid. A copy of a guard won't guard anything by default.
+The `basic_receiver` class has default copy/move constructor/assignment operator. Those methods are empty, and are just here to allow default copy/move operation on `basic_receiver` inheriting classes. If a guard is destroyed after being copied/moved from, all the connections it's guarding will be invalid. A copy of a guard won't guard anything by default.
 
 ## Signal transformation
 
@@ -785,7 +789,7 @@ Eg: if you have a `signal<int, std::string>`, using map<1, 0> will generate the 
 Parameters cannot be duplicated that way (map<0, 0> is invalid, because 0 appears twice), and values must be in range of the count of the source signal parameter (ex: map<2> would be invalid, and won't compile, with a `signal<int, char>`).
 
 ```
-class my_emitter: public emitter
+class my_emitter: public basic_emitter
 {
 public:
     signal<int, std::string> int_string_signal;
@@ -823,7 +827,7 @@ If fewer transformations are passed than the amount of parameters in the source 
 `std::identity` can be used as a transformation that doesn't modify the parameter.
 
 ```
-class my_emitter: public emitter
+class my_emitter: public basic_emitter
 {
 public:
     signal<int, std::string> int_string_signal;
@@ -873,7 +877,7 @@ auto main() -> int
 filter allows to call a slot only if a predicate is respected. The source signal parameters must match the predicate signal parameters, potentially after applying partial parameter dropping and type conversions. The resulting call must be convertible to a `bool`
 
 ```
-class my_emitter: public emitter
+class my_emitter: public basic_emitter
 {
 public:
     signal<int, std::string> int_string_signal;
@@ -883,6 +887,11 @@ public:
         emit(&my_emitter::int_string_signal, 5, "test");
     }
 };
+
+void print(int, std::string text)
+{
+    std::cout << text << std::endl;
+}
 
 auto main() -> int
 {
@@ -924,10 +933,10 @@ and the resulting type of the accept call must follow this pattern:
 
 ```
 template<source_like Source>
-class transformation_result: public connectable
+class transformation_result: public std::remove_cvref_t<Source>::connectable_type
 {
 public:
-    friend connectable;
+    friend std::remove_cvref_t<Source>::connectable_type;
 
     using args =
         typename std::remove_cvref_t<Source>::args;
@@ -938,13 +947,13 @@ public:
     }
 
 private:
-    template<partially_tuple_callable<
+    template<details::partially_tuple_callable<
         typename std::remove_cvref_t<Source>::args> Callable>
     auto forwarding_lambda(Callable&& callable) const
     {
         return [callable = std::forward<Callable>(callable)]<class... Args>(Args&&... args) mutable
         {
-            partial_call(callable, args...);
+            details::partial_call(callable, args...);
         };
     }
 
@@ -953,7 +962,7 @@ private:
 ```
 
 The resulting type must:
-    - inherits connectable;
+    - inherits std::remove_cvref_t<Source>::connectable_type;
     - have an args public alias that is a tuple of the resulting signal parameters
     - have a method accessible to connectable named `forwarding lambda` that must take a Callable appliable to the transformed signal, and return a Callable accepting the input signal parameters, and applying the transformation of the signal.
 
@@ -975,11 +984,10 @@ public:
 template<source_like Source>
     // Ensures there is at least on parameter in the input signal
     requires (std::tuple_size_v<typename std::remove_cvref_t<Source>::args> > 0)
-class only_last_parameter_result: public source,
-                        public connectable
+class only_last_parameter_result: public std::remove_cvref_t<Source>::connectable_type
 {
 public:
-    friend connectable;
+    friend std::remove_cvref_t<Source>::connectable_type;
 
     // Alias to simplify code. Represent the input signal parameters.
     using input_tuple = typename std::remove_cvref_t<Source>::args;
@@ -995,13 +1003,13 @@ public:
 
 private:
     // forwarding_lambda
-    template<partially_tuple_callable<args> Callable>
+    template<details::partially_tuple_callable<args> Callable>
     auto forwarding_lambda(Callable&& callable) const
     {
         return [callable = std::forward<Callable>(callable)]<class... Args>(Args&&... args) mutable
         {
             // Only calls Callable with the last parameter.
-            partial_call(callable, std::forward<Args...[sizeof...(Args) - 1]>(args...[sizeof...(Args) - 1]));
+            details::partial_call(callable, std::forward<Args...[sizeof...(Args) - 1]>(args...[sizeof...(Args) - 1]));
         };
     }
 
@@ -1016,7 +1024,7 @@ Transformations can be chained, by either chaining `apply()` calls, or chaining 
 ```
 #include <iostream>
 
-class thermometer: public emitter
+class thermometer: public basic_emitter
 {
 public:
     // Signal producing a double
@@ -1029,7 +1037,7 @@ public:
     }
 };
 
-class temperature_printer: public receiver
+class temperature_printer: public basic_receiver
 {
 public:
     // Slots are simply methods
@@ -1104,7 +1112,7 @@ Chains can be saved and applied to multiple signals:
 ```
 #include <iostream>
 
-class thermometer: public emitter
+class thermometer: public basic_emitter
 {
 public:
     // Signal producing a double
@@ -1117,7 +1125,7 @@ public:
     }
 };
 
-class temperature_printer: public receiver
+class temperature_printer: public basic_receiver
 {
 public:
     // Slots are simply methods
@@ -1176,7 +1184,7 @@ auto main() -> int
         // Make it a string
         | transform(to_string)
         // Print it!
-        | connect(&temperature_printer::print_temperature, p);
+        | connect(&temperature_printer::print_temperature, p)
     };
 
     t.temperature_changed
@@ -1217,7 +1225,7 @@ Usage:
 ```
 storing_policy policy {};
 
-class my_emitter: public emitter
+class my_emitter: public basic_emitter
 {
 public:
     signal<int, std::string> int_string_signal;
