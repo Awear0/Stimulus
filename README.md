@@ -9,6 +9,10 @@ It is a C++26 only library, and has only been tested with Clang 21.1.5 so far.
 
 Stimulus allows to add typed signal members to your own classes, and connect those signal to functions, lambdas, functors or method. Connections can be handled manually or automatically through scoped connections and guard classes instance.
 
+## How do I use it?
+
+Simply includes stimulus.h, and you're ready to go!
+
 ## Simple examples
 
 Stimulus allows to create Qt-style signal and connection:
