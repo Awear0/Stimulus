@@ -1,4 +1,4 @@
-#include "../stimulus.h"
+#include "stimulus.h"
 
 #include <cstdlib>
 #include <string>

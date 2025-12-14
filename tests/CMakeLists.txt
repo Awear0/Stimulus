@@ -83,6 +83,10 @@ add_executable(tests
     ${TEST_SOURCES}
 )
 
+target_include_directories(tests PRIVATE 
+    ${PROJECT_SOURCE_DIR}/include
+)
+
 target_link_libraries(tests
     PRIVATE
         GTest::gtest
@@ -91,6 +95,10 @@ target_link_libraries(tests
 
 add_executable(tests-thread-sanitizer
     ${TEST_SOURCES}
+)
+
+target_include_directories(tests-thread-sanitizer PRIVATE 
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 target_compile_options(tests-thread-sanitizer PRIVATE
@@ -107,6 +115,10 @@ target_link_libraries(tests-thread-sanitizer
 
 add_executable(tests-address-sanitizer
     ${TEST_SOURCES}
+)
+
+target_include_directories(tests-address-sanitizer PRIVATE 
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 target_compile_options(tests-address-sanitizer PRIVATE

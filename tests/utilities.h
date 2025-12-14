@@ -3,7 +3,7 @@
 
 #include <list>
 
-#include "../stimulus.h"
+#include "stimulus.h"
 
 struct copy_move_counter
 {
