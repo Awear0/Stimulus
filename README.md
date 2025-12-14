@@ -1260,3 +1260,9 @@ auto main() -> int
 ```
 
 **With asynchronous policies, one must be careful about signal with reference parameters, and must ensure that all references will stay valid until each slot is executed.**
+
+# License
+
+Stimulus is licensed under the BSD 3-Clause License. See [LICENSE](LICENSE) for details.
+
+Copyright (c) 2025 Armand Rossius. All rights reserved.
