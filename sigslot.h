@@ -337,7 +337,9 @@ namespace details
 
         explicit unsafe_shared_pointer(T* pointer):
             m_holder {
-                new pointer_holder { .pointer = static_cast<void*>(pointer), .count = 1 }
+                (pointer != nullptr)
+                    ? new pointer_holder { .pointer = static_cast<void*>(pointer), .count = 1 }
+                    : nullptr
         }
         {
         }

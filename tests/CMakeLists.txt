@@ -5,7 +5,7 @@ enable_testing()
 # Look for an installed GTest package
 find_package(GTest REQUIRED)
 
-add_executable(tests
+set(TEST_SOURCES
     test_basic_connect_emit.cpp
     test_connection.cpp
     test_connect_once.cpp
@@ -25,15 +25,9 @@ add_executable(tests
     test_exceptions.cpp
 )
 
-target_link_libraries(tests
-    PRIVATE
-        GTest::gtest
-        GTest::gtest_main
-)
-
 # Enable maximum warnings and treat them as errors
 if(MSVC)
-    target_compile_options(tests PRIVATE
+    add_compile_options(
         /W4                     # Maximum warning level
         /WX                     # Treat warnings as errors
         /permissive-            # Strict C++ conformance
@@ -44,7 +38,7 @@ if(MSVC)
         /w14928                 # Illegal copy-initialization
     )
 else()
-    target_compile_options(tests PRIVATE
+    add_compile_options(
         -Wall                   # Standard warnings
         -Wextra                 # Extra warnings
         -Wpedantic              # Pedantic warnings
@@ -65,7 +59,7 @@ else()
     
     # GCC-specific warnings
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        target_compile_options(tests PRIVATE
+        add_compile_options(
             -Wmisleading-indentation
             -Wduplicated-cond
             -Wduplicated-branches
@@ -76,18 +70,57 @@ else()
     
     # Clang-specific warnings
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        target_compile_options(tests PRIVATE
+        add_compile_options(
             -Wmost
             -Wextra-semi
         )
     endif()
 endif()
 
-target_compile_options(tests PRIVATE
-        -fsanitize=thread)
-
-target_link_options(tests PRIVATE
-        -fsanitize=thread)
-
 include(GoogleTest)
+
+add_executable(tests
+    ${TEST_SOURCES}
+)
+
+target_link_libraries(tests
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+
+add_executable(tests-thread-sanitizer
+    ${TEST_SOURCES}
+)
+
+target_compile_options(tests-thread-sanitizer PRIVATE
+    -fsanitize=thread)
+
+target_link_options(tests-thread-sanitizer PRIVATE
+    -fsanitize=thread)
+
+target_link_libraries(tests-thread-sanitizer
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+
+add_executable(tests-address-sanitizer
+    ${TEST_SOURCES}
+)
+
+target_compile_options(tests-address-sanitizer PRIVATE
+    -fsanitize=address,undefined)
+
+target_link_options(tests-address-sanitizer PRIVATE
+    -fsanitize=address,undefined)
+
+target_link_libraries(tests-address-sanitizer
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+
 gtest_discover_tests(tests)
+gtest_discover_tests(tests-thread-sanitizer)
+gtest_discover_tests(tests-address-sanitizer)
