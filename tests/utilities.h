@@ -3,7 +3,7 @@
 
 #include <list>
 
-#include "../sigslot.h"
+#include "../stimulus.h"
 
 struct copy_move_counter
 {

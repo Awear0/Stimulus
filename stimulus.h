@@ -1,5 +1,5 @@
-#ifndef SIGSLOT_H_
-#define SIGSLOT_H_
+#ifndef STIMULUS_H_
+#define STIMULUS_H_
 
 #include <atomic>
 #include <concepts>
@@ -2330,4 +2330,4 @@ using safe_emitter = details::emitter<std::mutex, std::shared_ptr>;
 using basic_receiver = details::receiver<details::fake_mutex, details::unsafe_shared_pointer>;
 using safe_receiver = details::receiver<std::mutex, std::shared_ptr>;
 
-#endif // SIGSLOT_H_
+#endif // STIMULUS_H_

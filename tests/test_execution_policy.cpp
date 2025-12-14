@@ -1,4 +1,4 @@
-#include "../sigslot.h"
+#include "../stimulus.h"
 
 #include <functional>
 #include <string>

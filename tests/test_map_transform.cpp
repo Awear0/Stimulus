@@ -1,7 +1,6 @@
-#include "../sigslot.h"
+#include "../stimulus.h"
 
 #include <cstdlib>
-#include <functional>
 #include <string>
 
 #include <gtest/gtest.h>

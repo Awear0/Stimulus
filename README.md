@@ -2,16 +2,16 @@
 
 ## Quick description
 
-Sigslot is a C++ library implementing the observer pattern. It shares some concepts with Qt library, and reactive programming.
+Stimulus is a C++ header-only library implementing the observer pattern. It shares some concepts with the Qt library, and reactive programming.
 
 
 It is a C++26 only library, and has only been tested with Clang 21.1.5 so far.
 
-Sigslot allows to add typed signal members to your own classes, and connect those signal to functions, lambdas, functors or method. Connections can be handled manually or automatically through scoped connections and guard classes instance.
+Stimulus allows to add typed signal members to your own classes, and connect those signal to functions, lambdas, functors or method. Connections can be handled manually or automatically through scoped connections and guard classes instance.
 
 ## Simple examples
 
-Sigslot allows to create Qt-style signal and connection:
+Stimulus allows to create Qt-style signal and connection:
 
 ```
 #include <iostream>
@@ -191,13 +191,13 @@ auto main() -> int
 }
 ```
 
-Many more features are available in Sigslot, such as suspend/resume on signals, signal forwarding, custom execution policies for slot execution in event loops, custom transformations, as well as thread-safety!
+Many more features are available in Stimulus, such as suspend/resume on signals, signal forwarding, custom execution policies for slot execution in event loops, custom transformations, as well as thread-safety!
 
 # Features
 
 ## Signals
 
-Signals are the main features of Sigslot. In order for a class to have signal members, it must inherit `basic_emitter`.
+Signals are the main features of Stimulus. In order for a class to have signal members, it must inherit `basic_emitter`.
 
 ```
 class my_class: public basic_emitter
