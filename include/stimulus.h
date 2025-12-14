@@ -646,7 +646,6 @@ namespace details
     };
 } // namespace details
 
-// TODO AROSS: Complete
 template<class Source>
 concept source_like =
     requires(const Source& source, typename std::remove_cvref_t<Source>::args tuple) {
