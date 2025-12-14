@@ -236,7 +236,7 @@ public:
 
     void function_that_emits()
     {
-        /* This syntax might seem more cumbersome than required, but allows to ensure at
+        /* This syntax might seem more cumbersome than required, but ensures at
          * compile time that the signal belongs to the emitting class. */
         emit(&my_class::many_parameters_signal, 5, 3.14, 'c', "a string");
     }
@@ -436,8 +436,8 @@ Slots are not required to return void, but any return value will be ignored. The
 
 basic_emitter and basic_receiver classes are not thread safe. 
 
-safe_emitter and safe_receiver classes are feature equivalent to basic_emitter and basic_receiver and provides thread safety for the following functions:
-`connect`, `disconnect`, `add_exception_handler`, `suspend`, `resume` and `emit` even when called on the same connection or signal.
+safe_emitter and safe_receiver classes are feature equivalent to basic_emitter and basic_receiver and provide thread safety for the following functions:
+`connect`, `disconnect`, `add_exception_handler`, `suspend`, `resume` and `emit`, even when called on the same connection or signal.
 
 ### Slot call policy
 
@@ -477,7 +477,7 @@ auto main() -> int
     c.int_signal.connect(int_string_function);
     // Valid as well, std::string argument will be dropped before calling int_function
     c.int_signal.connect(int_function);
-    // Valid as well, all arguments will be dropped before calling int_function
+    // Valid as well, all arguments will be dropped before calling empty_function
     c.int_signal.connect(empty_function);
 
     return 0;
@@ -515,7 +515,7 @@ auto main() -> int
 
 #### Value to reference and reference to value conversion
 
-If a signal emits a reference, it can be connected to a slot taking a reference, or a value (a copy will be perfomed in the later case).
+If a signal emits a reference, it can be connected to a slot taking a reference, or a value (a copy will be perfomed in the latter case).
 
 If a signal emits a value, it cannot be connected to a slot taking a reference. It can however be connected to a slot taking a const reference, or even an rvalue reference.
 
@@ -672,7 +672,7 @@ public:
 In order to ensure that connections are automatically disconnected (and thus avoid dangling references), a guard mechanism exists.
 
 This mechanism is implemented through the `basic_receiver` class, which can be inherited from.
-Any receiver inheriting object can be passed as a parameter of a connect call and act as a guard: the created connection will be automatically disconnected upon the guard destruction.
+Any `basic_receiver` inheriting object can be passed as a parameter of a connect call and act as a guard: the created connection will be automatically disconnected upon the guard destruction.
 
 ```
 class my_emitter: public basic_emitter
@@ -769,7 +769,7 @@ In order to apply a transformation before connecting a slot to it, one must use 
 my_signal.apply(my_transformation).connect(my_slot);
 ```
 
-Parameters convertion and partial parameter dropping can still be applied to slot connected to a transformed signal.
+Parameters convertion and partial parameter dropping can still be applied to slots connected to a transformed signal.
 
 ### Pipe operator
 
@@ -822,7 +822,7 @@ auto main() -> int
 
 #### transform
 
-transform allow to apply a function (transformation) to each parameter of the source signal before passing it to the slot. The transformation can modify the parameter type, as long as the slot can be called with the resulting type.
+transform allows to apply a function (transformation) to each parameter of the source signal before passing it to the slot. The transformation can modify the parameter type, as long as the slot can be called with the resulting type.
 If fewer transformations are passed than the amount of parameters in the source signal, the remaining parameters will be forwarded as is.
 `std::identity` can be used as a transformation that doesn't modify the parameter.
 
@@ -962,9 +962,9 @@ private:
 ```
 
 The resulting type must:
-    - inherits std::remove_cvref_t<Source>::connectable_type;
-    - have an args public alias that is a tuple of the resulting signal parameters
-    - have a method accessible to connectable named `forwarding lambda` that must take a Callable appliable to the transformed signal, and return a Callable accepting the input signal parameters, and applying the transformation of the signal.
+- inherits std::remove_cvref_t<Source>::connectable_type;
+- have an args public alias that is a tuple of the resulting signal parameters
+- have a method accessible to connectable named `forwarding_lambda` that must take a Callable appliable to the transformed signal, and return a Callable accepting the input signal parameters, and applying the transformation of the signal.
 
 Here's an example of a custom transformation that takes a signal, and return a signal that only has one parameter: the last parameter of the input signal.
 
@@ -1201,8 +1201,8 @@ auto main() -> int
 
 By default, all connections are executed synchronously. However, custom execution policy can be implemented.
 To define a custom policy, a custom class must be created, containing the following features:
-    - a method `void execute(std::function<void()>)`: This method will be called each time a slot should be executed. The parameter is a std::function that, when called, will execute the slot with the appropriate parameters. This function can be executed directly, stored, or even executed on another thread.
-    - a static constexpr bool member named `is_synchronous`: The purpose of this member is to indicate whether the policy is synchronous or not. If the policy is synchronous, some optimization regarding parameters copy will be performed. If you're unsure, set this member to false.
+- a method `void execute(std::function<void()>)`: This method will be called each time a slot should be executed. The parameter is a std::function that, when called, will execute the slot with the appropriate parameters. This function can be executed directly, stored, or even executed on another thread.
+- a static constexpr bool member named `is_synchronous`: The purpose of this member is to indicate whether the policy is synchronous or not. If the policy is synchronous, some optimization regarding parameters copy will be performed. If you're unsure, set this member to false.
 
 Exemple of a custom policy that simply stores all potential slot invocations, instead of calling them:
 
