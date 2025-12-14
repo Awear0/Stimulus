@@ -543,6 +543,16 @@ namespace details
 
         auto lock() const -> unsafe_shared_pointer<T>
         {
+            if (m_holder == nullptr)
+            {
+                return unsafe_shared_pointer<T> {};
+            }
+
+            if (m_holder->count == 0)
+            {
+                return unsafe_shared_pointer<T> {};
+            }
+
             return unsafe_shared_pointer<T> { m_holder };
         }
 

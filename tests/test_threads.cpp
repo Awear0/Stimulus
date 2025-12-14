@@ -63,3 +63,44 @@ TEST_F(test_threads, many_connections_many_emits)
 
     // Ensuring there's no crash
 }
+
+TEST_F(test_threads, disconnect_during_emit)
+{
+    auto conn = empty_emitter.generic_signal.connect(slot_function<>);
+
+    std::thread t1 { [&]()
+    {
+        for (int i = 0; i < 10000; ++i)
+        {
+            empty_emitter.generic_emit();
+        }
+    } };
+
+    std::thread t2 { [&]()
+    {
+        for (int i = 0; i < 10000; ++i)
+        {
+            conn.disconnect();
+            conn = empty_emitter.generic_signal.connect(slot_function<>);
+        }
+    } };
+
+    t1.join();
+    t2.join();
+    // Ensure no crash
+}
+
+TEST_F(test_threads, guard_destruction_during_emit)
+{
+    for (int i = 0; i < 1000; ++i)
+    {
+        auto guard = std::make_unique<safe_receiver>();
+        empty_emitter.generic_signal.connect(slot_function<>, *guard);
+
+        std::thread t1 { [&]() { empty_emitter.generic_emit(); } };
+        std::thread t2 { [&]() { guard.reset(); } }; // Destroy guard
+
+        t1.join();
+        t2.join();
+    }
+}
