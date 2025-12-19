@@ -1463,7 +1463,7 @@ namespace details
             std::lock_guard lock { m_mutex };
             SharedPointer<slot_list> slots { new slot_list() };
 
-            slots->reserve(slots->size());
+            slots->reserve(m_slots->size());
             std::ranges::copy_if(*m_slots, std::back_inserter(*slots), [holder](const auto& slot) {
                 return slot.get() != holder;
             });
