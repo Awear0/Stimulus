@@ -49,7 +49,7 @@ namespace details
     public:
         virtual ~execution_policy_holder_implementation_interface() = default;
 
-        virtual void execute(std::function<void()> invocable) = 0;
+        virtual void execute(std::function<void()>&& invocable) = 0;
         virtual auto is_synchronous() const -> bool = 0;
     };
 
@@ -63,7 +63,7 @@ namespace details
         {
         }
 
-        void execute(std::function<void()> invocable) override
+        void execute(std::function<void()>&& invocable) override
         {
             m_policy.execute(std::move(invocable));
         }
@@ -1884,7 +1884,7 @@ namespace details
             else
             {
                 m_policy.execute(
-                    [exception_handlers = copy_exception_handlers(),
+                    [exception_handlers = std::move(exception_handlers),
                      slot = m_slot,
                      ... args = ref_or_value<Args>(std::forward<EmittedArgs>(args))] mutable
                 { safe_execute(slot, exception_handlers, std::forward<decltype(args)>(args)...); });
