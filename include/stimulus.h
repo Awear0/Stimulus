@@ -1,6 +1,7 @@
 #ifndef STIMULUS_H_
 #define STIMULUS_H_
 
+#include <algorithm>
 #include <atomic>
 #include <concepts>
 #include <cstddef>
@@ -1460,8 +1461,12 @@ namespace details
         void disconnect(connection_holder_implementation* holder) const
         {
             std::lock_guard lock { m_mutex };
-            SharedPointer<slot_list> slots { new slot_list(*m_slots) };
-            std::erase_if(*slots, [holder](const auto& slot) { return slot.get() == holder; });
+            SharedPointer<slot_list> slots { new slot_list() };
+
+            slots->reserve(slots->size());
+            std::ranges::copy_if(*m_slots, std::back_inserter(*slots), [holder](const auto& slot) {
+                return slot.get() != holder;
+            });
 
             std::swap(slots, m_slots);
         }
@@ -2054,7 +2059,11 @@ namespace details
         -> connection<SharedPointer>
     {
         std::lock_guard lock { m_mutex };
-        SharedPointer<slot_list> slots { new slot_list(*m_slots) };
+        SharedPointer<slot_list> slots { new slot_list() };
+
+        slots->reserve(m_slots->size() + 1);
+        std::ranges::copy(*m_slots, std::back_inserter(*slots));
+
         slots->emplace_back(new connection_holder_implementation(*this,
                                                                  std::forward<Callable>(callable),
                                                                  std::forward<Policy>(policy),

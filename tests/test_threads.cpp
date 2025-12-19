@@ -25,11 +25,11 @@ TEST_F(test_threads, many_connections)
     int& count = call_count<>;
     reset<>();
 
-    std::thread t1 { create_connections<1000>, std::ref(empty_emitter) };
-    std::thread t2 { create_connections<1000>, std::ref(empty_emitter) };
-    std::thread t3 { create_connections<1000>, std::ref(empty_emitter) };
-    std::thread t4 { create_connections<1000>, std::ref(empty_emitter) };
-    std::thread t5 { create_connections<1000>, std::ref(empty_emitter) };
+    std::thread t1 { create_connections<2000>, std::ref(empty_emitter) };
+    std::thread t2 { create_connections<2000>, std::ref(empty_emitter) };
+    std::thread t3 { create_connections<2000>, std::ref(empty_emitter) };
+    std::thread t4 { create_connections<2000>, std::ref(empty_emitter) };
+    std::thread t5 { create_connections<2000>, std::ref(empty_emitter) };
 
     t1.join();
     t2.join();
@@ -39,7 +39,7 @@ TEST_F(test_threads, many_connections)
 
     empty_emitter.generic_emit();
 
-    EXPECT_EQ(count, 5 * 1000);
+    EXPECT_EQ(count, 5 * 2000);
 }
 
 TEST_F(test_threads, many_connections_many_emits)
