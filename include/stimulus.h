@@ -1431,25 +1431,27 @@ namespace details
         {
             auto slots { copy_slots() };
 
-            if (slots.empty())
+            if (slots->empty())
             {
                 return;
             }
 
-            auto begin { slots.begin() };
-            auto previous_to_end { std::prev(slots.end()) };
+            auto begin { slots->begin() };
+            auto previous_to_end { std::prev(slots->end()) };
 
             for (auto it { begin }; it != previous_to_end; ++it)
             {
                 (**it)(emitted_args...);
             }
 
-            (*slots.back())(std::forward<EmittedArgs>(emitted_args)...);
+            (*slots->back())(std::forward<EmittedArgs>(emitted_args)...);
         }
 
         class connection_holder_implementation;
 
-        auto copy_slots() const -> std::vector<SharedPointer<connection_holder_implementation>>
+        using slot_list = std::vector<SharedPointer<connection_holder_implementation>>;
+
+        auto copy_slots() const -> SharedPointer<slot_list>
         {
             std::lock_guard lock { m_mutex };
             return m_slots;
@@ -1458,10 +1460,13 @@ namespace details
         void disconnect(connection_holder_implementation* holder) const
         {
             std::lock_guard lock { m_mutex };
-            std::erase_if(m_slots, [holder](const auto& slot) { return slot.get() == holder; });
+            SharedPointer<slot_list> slots { new slot_list(*m_slots) };
+            std::erase_if(*slots, [holder](const auto& slot) { return slot.get() == holder; });
+
+            std::swap(slots, m_slots);
         }
 
-        mutable std::vector<SharedPointer<connection_holder_implementation>> m_slots {};
+        mutable SharedPointer<slot_list> m_slots { SharedPointer<slot_list>(new slot_list()) };
         mutable Mutex m_mutex;
     };
 
@@ -2049,13 +2054,16 @@ namespace details
         -> connection<SharedPointer>
     {
         std::lock_guard lock { m_mutex };
-        m_slots.emplace_back(new connection_holder_implementation(*this,
-                                                                  std::forward<Callable>(callable),
-                                                                  std::forward<Policy>(policy),
-                                                                  connect_once));
+        SharedPointer<slot_list> slots { new slot_list(*m_slots) };
+        slots->emplace_back(new connection_holder_implementation(*this,
+                                                                 std::forward<Callable>(callable),
+                                                                 std::forward<Policy>(policy),
+                                                                 connect_once));
+
+        std::swap(slots, m_slots);
 
         return connection<SharedPointer> {
-            typename SharedPointer<details::connection_holder>::weak_type(m_slots.back())
+            typename SharedPointer<details::connection_holder>::weak_type(m_slots->back())
         };
     }
 
