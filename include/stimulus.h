@@ -127,6 +127,11 @@ namespace details
         {
         }
 
+        explicit execution_policy_holder(synchronous_policy&& policy):
+            m_policy { std::move(policy) }
+        {
+        }
+
         template<execution_policy Policy>
         explicit execution_policy_holder(Policy&& policy):
             m_policy { std::make_unique<execution_policy_holder_implementation<Policy>>(
