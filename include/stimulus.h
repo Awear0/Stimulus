@@ -122,13 +122,8 @@ namespace details
         static constexpr policy_visitor_synchronicity_checker synchronicity_checker {};
 
     public:
-        explicit execution_policy_holder(const synchronous_policy& policy):
+        explicit execution_policy_holder(synchronous_policy policy):
             m_policy { policy }
-        {
-        }
-
-        explicit execution_policy_holder(synchronous_policy&& policy):
-            m_policy { std::move(policy) }
         {
         }
 
