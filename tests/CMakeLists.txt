@@ -133,6 +133,52 @@ target_link_libraries(tests-address-sanitizer
         GTest::gtest_main
 )
 
+add_executable(tests-coverage 
+    ${TEST_SOURCES})
+
+target_include_directories(tests-coverage PRIVATE 
+    ${PROJECT_SOURCE_DIR}/include
+)
+
+target_compile_options(tests-coverage PRIVATE
+    -O0 -g)
+
+target_link_libraries(tests-coverage
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+
+# Coverage configuration
+if(ENABLE_COVERAGE)
+    target_compile_options(tests-coverage PRIVATE -fprofile-instr-generate -fcoverage-mapping)
+        target_link_options(tests-coverage PRIVATE -fprofile-instr-generate)
+    
+    find_program(LLVM_PROFDATA llvm-profdata-21 REQUIRED)
+    find_program(LLVM_COV llvm-cov-21 REQUIRED)
+
+    add_custom_target(coverage
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/coverage
+            COMMAND ${CMAKE_COMMAND} -E env LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage.profraw $<TARGET_FILE:tests-coverage>
+            COMMAND ${LLVM_PROFDATA} merge -sparse ${CMAKE_BINARY_DIR}/coverage.profraw -o ${CMAKE_BINARY_DIR}/coverage.profdata
+            COMMAND ${LLVM_COV} show $<TARGET_FILE:tests-coverage> 
+                -instr-profile=${CMAKE_BINARY_DIR}/coverage.profdata 
+                -format=html 
+                -output-dir=${CMAKE_BINARY_DIR}/coverage
+                -ignore-filename-regex='test/|gtest/'
+                -show-line-counts-or-regions
+                -show-instantiations=false
+                -Xdemangler c++filt
+                -Xdemangler -n
+            COMMAND ${LLVM_COV} report $<TARGET_FILE:tests-coverage> -instr-profile=${CMAKE_BINARY_DIR}/coverage.profdata -ignore-filename-regex='test/|gtest/'
+            COMMAND ${CMAKE_COMMAND} -E echo "Coverage report: ${CMAKE_BINARY_DIR}/coverage/index.html"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+            DEPENDS tests-coverage
+            COMMENT "Generating coverage report..."
+        )
+endif()
+
 gtest_discover_tests(tests)
 gtest_discover_tests(tests-thread-sanitizer)
 gtest_discover_tests(tests-address-sanitizer)
+gtest_discover_tests(tests-coverage)

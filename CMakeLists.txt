@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.14)
 project(Stimulus VERSION 0.1.0 LANGUAGES CXX)
 
+option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
+
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
